@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Commercial Fusion Timeline: A Q-Factor Analysis</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/theme/black.css">
+    <style>
+        :root {
+            --r-background-color: #0a0e27;
+            --r-main-color: #e0e0e0;
+            --r-heading-color: #00d4ff;
+            --r-link-color: #00d4ff;
+        }
+        .reveal { background: #0a0e27; }
+        .reveal h1, .reveal h2, .reveal h3 { color: #00d4ff; text-transform: none; font-family: 'Segoe UI', Arial, sans-serif; }
+        .reveal h1 { font-size: 2.2em; }
+        .reveal h2 { font-size: 1.6em; }
+        .reveal h3 { font-size: 1.2em; color: #66b2ff; }
+        .reveal p, .reveal li, .reveal td, .reveal th { font-family: 'Segoe UI', Arial, sans-serif; font-size: 0.7em; }
+        .reveal table { margin: 0 auto; border-collapse: collapse; font-size: 0.6em; }
+        .reveal th { background: #1a2550; color: #00d4ff; padding: 8px 12px; border: 1px solid #334; }
+        .reveal td { padding: 6px 12px; border: 1px solid #334; }
+        .reveal tr:nth-child(even) { background: rgba(0,100,200,0.08); }
+        .highlight-row { background: rgba(0,212,255,0.15) !important; font-weight: bold; }
+        .reveal .big-number { font-size: 3.5em; color: #00d4ff; font-weight: bold; margin: 20px 0; }
+        .reveal .subtitle { color: #8899bb; font-size: 0.8em; }
+        .reveal .red { color: #ff4444; }
+        .reveal .green { color: #44ff88; }
+        .reveal .yellow { color: #ffcc00; }
+        .reveal .dim { color: #667788; }
+        .prob-bar { background: #1a2550; border-radius: 8px; height: 40px; width: 80%; margin: 10px auto; position: relative; overflow: hidden; }
+        .prob-fill { height: 100%; border-radius: 8px; display: flex; align-items: center; padding-left: 12px; font-weight: bold; font-size: 0.7em; }
+        .prob-label { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 0.6em; color: #aaa; }
+        .reveal .chart-container { width: 90%; margin: 0 auto; height: 350px; position: relative; }
+        .q-dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%); }
+        .q-dot.tokamak { background: #ff6644; }
+        .q-dot.icf { background: #44aaff; }
+        .q-dot.stellarator { background: #44ff88; }
+        .q-label { position: absolute; font-size: 0.45em; white-space: nowrap; transform: translateX(-50%); color: #ccc; }
+        .axis-label { position: absolute; font-size: 0.5em; color: #888; }
+        .grid-line { position: absolute; border-top: 1px dashed #223; width: 100%; }
+        .q1-line { position: absolute; border-top: 2px solid rgba(255,204,0,0.5); width: 100%; }
+        .reveal ul { list-style: none; padding-left: 0; }
+        .reveal ul li:before { content: "\25B8"; color: #00d4ff; margin-right: 8px; }
+        .gap-visual { display: flex; align-items: center; justify-content: center; gap: 20px; margin: 20px 0; }
+        .gap-box { padding: 15px 20px; border-radius: 8px; text-align: center; }
+        .two-col { display: flex; gap: 30px; align-items: flex-start; }
+        .two-col > div { flex: 1; }
+    </style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- SLIDE 1: Title -->
+<section>
+    <h1>Commercial Fusion Timeline</h1>
+    <p class="subtitle">A Q-Factor Grounded Analysis</p>
+    <br>
+    <p style="font-size:0.6em; color:#667788;">How close are we really to fusion power generation?</p>
+    <p style="font-size:0.5em; color:#445566;">Research compiled March 2026</p>
+</section>
+
+<!-- SLIDE 2: The Question -->
+<section>
+    <h2>The Central Question</h2>
+    <br>
+    <p style="font-size:1.0em; color:#fff;">What is the likelihood of anyone demonstrating<br><span style="color:#00d4ff; font-weight:bold;">break-even fusion for power generation</span><br>by end of 2030?</p>
+    <br>
+    <p class="fragment" style="font-size:0.7em; color:#8899bb;">To answer this, we trace the historical record of fusion energy gain (Q factor) and project forward.</p>
+</section>
+
+<!-- SLIDE 3: What is Q? -->
+<section>
+    <h2>What is the Q Factor?</h2>
+    <br>
+    <div style="font-size:1.4em; color:#fff; margin:20px 0;">
+        Q = <span style="color:#44ff88;">Fusion Energy Out</span> / <span style="color:#ff6644;">Heating Energy In</span>
+    </div>
+    <br>
+    <table>
+        <tr><th>Q Value</th><th>Meaning</th></tr>
+        <tr><td>Q &lt; 1</td><td>More energy in than out (net energy loss)</td></tr>
+        <tr><td class="green">Q = 1</td><td>"Scientific breakeven" &mdash; energy out equals energy in</td></tr>
+        <tr><td class="green">Q = 5</td><td>Self-heating begins to dominate</td></tr>
+        <tr><td class="green">Q = 10</td><td>ITER's target; burning plasma regime</td></tr>
+        <tr><td class="yellow">Q ~ 22+</td><td>Estimated minimum for commercial viability</td></tr>
+    </table>
+</section>
+
+<!-- SLIDE 4: Q Factor Timeline - Early Era -->
+<section>
+    <h2>Q Factor Timeline: The Early Era</h2>
+    <h3>1968 &ndash; 1997: Three Decades of Progress</h3>
+    <table>
+        <tr><th>Year</th><th>Device</th><th>Type</th><th>Q</th><th>Milestone</th></tr>
+        <tr><td>1968</td><td>T-3 (USSR)</td><td>Tokamak</td><td>&lt;&lt;0.01</td><td>First major tokamak success</td></tr>
+        <tr><td>1975-78</td><td>PLT (US)</td><td>Tokamak</td><td>~0.001</td><td>Fusion-relevant temperatures reached</td></tr>
+        <tr><td>1991</td><td>JET (UK)</td><td>Tokamak</td><td>~0.11</td><td>First controlled D-T fusion</td></tr>
+        <tr><td>1994</td><td>TFTR (US)</td><td>Tokamak</td><td>0.28</td><td>10.7 MW D-T fusion power</td></tr>
+        <tr class="highlight-row"><td>1997</td><td>JET (UK)</td><td>Tokamak</td><td><strong>0.67</strong></td><td>Record D-T Q (16 MW) &mdash; <em>still standing</em></td></tr>
+    </table>
+    <p class="fragment" style="font-size:0.6em; color:#ffcc00; margin-top:15px;">From 1968 to 1997: Q improved ~100x. Then progress stalled.</p>
+</section>
+
+<!-- SLIDE 5: Q Factor Timeline - The Breakthrough -->
+<section>
+    <h2>Q Factor Timeline: The NIF Breakthrough</h2>
+    <h3>2021 &ndash; 2025: Inertial Confinement Leaps Forward</h3>
+    <table>
+        <tr><th>Year</th><th>Device</th><th>Q</th><th>Energy Out</th><th>Milestone</th></tr>
+        <tr><td>2021</td><td>NIF</td><td>0.70</td><td>1.35 MJ</td><td>8x improvement over prior ICF</td></tr>
+        <tr class="highlight-row"><td>Dec 2022</td><td>NIF</td><td><strong>1.54</strong></td><td>3.15 MJ</td><td>First scientific breakeven (Q&gt;1)</td></tr>
+        <tr><td>Jul 2023</td><td>NIF</td><td>1.9</td><td>3.88 MJ</td><td>Continued improvement</td></tr>
+        <tr><td>Feb 2024</td><td>NIF</td><td>2.36</td><td>5.2 MJ</td><td>Major yield gain</td></tr>
+        <tr><td>Feb 2025</td><td>NIF</td><td>2.44</td><td>5.0 MJ</td><td>New record</td></tr>
+        <tr class="highlight-row"><td><strong>Apr 2025</strong></td><td><strong>NIF</strong></td><td><strong>4.13</strong></td><td><strong>8.6 MJ</strong></td><td><strong>Current world record</strong></td></tr>
+    </table>
+    <p class="fragment" style="font-size:0.6em; color:#44aaff; margin-top:15px;">Q improved from 0.70 to 4.13 in just 4 years &mdash; a 6x improvement.</p>
+</section>
+
+<!-- SLIDE 6: The Two Trends -->
+<section>
+    <h2>Two Divergent Q Trends</h2>
+    <br>
+    <div class="two-col">
+        <div style="text-align:center;">
+            <h3 style="color:#ff6644;">Magnetic Confinement</h3>
+            <div class="big-number" style="color:#ff6644; font-size:2.5em;">0.67</div>
+            <p>Best actual D-T Q<br><span class="dim">Set in 1997 &mdash; 29 years ago</span></p>
+            <p class="red" style="font-size:0.65em;">Plateau since 1997</p>
+        </div>
+        <div style="text-align:center;">
+            <h3 style="color:#44aaff;">Inertial Confinement</h3>
+            <div class="big-number" style="color:#44aaff; font-size:2.5em;">4.13</div>
+            <p>Best Q (laser-to-target)<br><span class="dim">Set April 2025</span></p>
+            <p class="green" style="font-size:0.65em;">Rapid improvement since 2021</p>
+        </div>
+    </div>
+    <p class="fragment" style="font-size:0.6em; color:#ffcc00; margin-top:15px;">But does NIF's Q = 4.13 mean we're close to power generation?</p>
+</section>
+
+<!-- SLIDE 7: The Great Deception -->
+<section>
+    <h2>The Great Q Deception</h2>
+    <h3>Scientific Q vs. Wall-Plug Reality</h3>
+    <br>
+    <div class="gap-visual">
+        <div class="gap-box" style="background:#0a3a0a; border:2px solid #44ff88;">
+            <div style="font-size:1.8em; color:#44ff88; font-weight:bold;">Q = 4.13</div>
+            <div style="font-size:0.6em; color:#aaa;">Scientific Q<br>Laser &rarr; Target</div>
+        </div>
+        <div style="font-size:2em; color:#ff4444;">&#x2260;</div>
+        <div class="gap-box" style="background:#3a0a0a; border:2px solid #ff4444;">
+            <div style="font-size:1.8em; color:#ff4444; font-weight:bold;">Q ~ 0.02</div>
+            <div style="font-size:0.6em; color:#aaa;">Engineering Q<br>Wall-plug &rarr; Electricity</div>
+        </div>
+    </div>
+    <br>
+    <table class="fragment">
+        <tr><th>What went in</th><th>Amount</th><th>What came out</th><th>Amount</th></tr>
+        <tr><td>Electricity from grid</td><td class="red">~300-400 MJ</td><td>Fusion energy</td><td class="green">8.6 MJ</td></tr>
+        <tr><td>Laser to target</td><td>2.08 MJ</td><td>Duration</td><td>~9 nanoseconds</td></tr>
+    </table>
+    <p class="fragment" style="font-size:0.65em; color:#ff4444; margin-top:10px;">NIF consumed ~40x more energy than the fusion it produced.</p>
+</section>
+
+<!-- SLIDE 8: Three Types of Breakeven -->
+<section>
+    <h2>Three Kinds of Breakeven</h2>
+    <br>
+    <table>
+        <tr><th>Type</th><th>Definition</th><th>Status</th></tr>
+        <tr>
+            <td><strong>Scientific</strong><br>Q<sub>sci</sub> &gt; 1</td>
+            <td>Fusion out &gt; heating in</td>
+            <td class="green"><strong>ACHIEVED</strong><br>NIF, Dec 2022 (Q=4.13 now)</td>
+        </tr>
+        <tr>
+            <td><strong>Engineering</strong><br>Q<sub>eng</sub> &gt; 1</td>
+            <td>Plant electricity out &gt; plant electricity in</td>
+            <td class="red"><strong>NOT ACHIEVED</strong><br>No device is close</td>
+        </tr>
+        <tr>
+            <td><strong>Commercial</strong><br>Q<sub>comm</sub></td>
+            <td>Competitive electricity cost</td>
+            <td class="red"><strong>NOT ACHIEVED</strong><br>Requires Q ~ 22+</td>
+        </tr>
+    </table>
+    <p class="fragment" style="font-size:0.65em; margin-top:15px;">The gap between scientific and engineering breakeven is <span class="yellow">~2 orders of magnitude.</span></p>
+</section>
+
+<!-- SLIDE 9: Current Projects -->
+<section>
+    <h2>Leading Projects &amp; Their Timelines</h2>
+    <table style="font-size:0.55em;">
+        <tr><th>Project</th><th>Approach</th><th>Q Target</th><th>Next Milestone</th><th>Power Gen?</th></tr>
+        <tr>
+            <td><strong>NIF/LLNL</strong></td>
+            <td>ICF (laser)</td>
+            <td>Q&gt;10 (~2030)</td>
+            <td>Laser upgrade to 2.6 MJ</td>
+            <td class="red">No (research only)</td>
+        </tr>
+        <tr>
+            <td><strong>SPARC (CFS)</strong></td>
+            <td>Compact tokamak</td>
+            <td>Q &gt; 10</td>
+            <td>First plasma 2027</td>
+            <td class="red">No (experiment)</td>
+        </tr>
+        <tr>
+            <td><strong>ITER</strong></td>
+            <td>Tokamak</td>
+            <td>Q = 10</td>
+            <td>First plasma 2033-34</td>
+            <td class="red">No (experiment)</td>
+        </tr>
+        <tr>
+            <td><strong>Helion</strong></td>
+            <td>Pulsed FRC</td>
+            <td>Net electricity</td>
+            <td>Orion facility 2028</td>
+            <td class="yellow">Claims 2028-29</td>
+        </tr>
+        <tr>
+            <td><strong>TAE</strong></td>
+            <td>FRC (p-B11)</td>
+            <td>Net energy</td>
+            <td>Copernicus ops</td>
+            <td class="red">Early 2030s</td>
+        </tr>
+        <tr>
+            <td><strong>ARC (CFS)</strong></td>
+            <td>Compact tokamak</td>
+            <td>Commercial</td>
+            <td>Design phase</td>
+            <td class="yellow">Early 2030s target</td>
+        </tr>
+    </table>
+    <p class="fragment" style="font-size:0.6em; color:#ffcc00;">No project designed to generate electricity is expected to operate before 2028 at the earliest.</p>
+</section>
+
+<!-- SLIDE 10: Technical Barriers -->
+<section>
+    <h2>The Engineering Chasm</h2>
+    <h3>Five unsolved problems between Q&gt;1 and power generation</h3>
+    <br>
+    <div style="text-align:left; max-width:700px; margin:0 auto;">
+        <p><span class="red" style="font-size:1.2em;">1.</span> <strong>Tritium fuel</strong> &mdash; Global supply: &lt;4 kg/yr. A plant needs ~56 kg/yr. Breeding blankets untested.</p>
+        <p><span class="red" style="font-size:1.2em;">2.</span> <strong>Materials</strong> &mdash; No material survives years of 14 MeV neutron bombardment. Qualification takes 15-25 years.</p>
+        <p><span class="red" style="font-size:1.2em;">3.</span> <strong>Continuous operation</strong> &mdash; NIF fires for nanoseconds. Best sustained: 18 min (EAST, low Q). Plants need years.</p>
+        <p><span class="red" style="font-size:1.2em;">4.</span> <strong>Electricity generation</strong> &mdash; No fusion device has ever generated a single watt of electricity.</p>
+        <p><span class="red" style="font-size:1.2em;">5.</span> <strong>Systems integration</strong> &mdash; Fuel cycle, heat extraction, power conditioning, remote maintenance &mdash; all unbuilt.</p>
+    </div>
+</section>
+
+<!-- SLIDE 11: Funding -->
+<section>
+    <h2>The Funding Surge</h2>
+    <br>
+    <div class="two-col">
+        <div>
+            <div class="big-number" style="font-size:2em;">$15.1B</div>
+            <p>Cumulative global investment<br><span class="dim">(as of Sept 2025)</span></p>
+            <div class="big-number" style="font-size:1.6em;">$2.64B</div>
+            <p>Invested in past 12 months<br><span class="dim">(to July 2025)</span></p>
+        </div>
+        <div>
+            <div class="big-number" style="font-size:2em;">53</div>
+            <p>Active fusion companies<br><span class="dim">(up from 23 in 2021)</span></p>
+            <div class="big-number" style="font-size:1.6em;">$6.5B</div>
+            <p>China spending 2023-2025<br><span class="dim">(&gt;3x US federal spending)</span></p>
+        </div>
+    </div>
+    <p class="fragment" style="font-size:0.6em; color:#8899bb; margin-top:15px;">For context: ITER alone costs ~$25-30B. Building a fusion industry likely requires $100B+.</p>
+</section>
+
+<!-- SLIDE 12: Historical Reality Check -->
+<section>
+    <h2>The Historical Reality Check</h2>
+    <br>
+    <h3 style="color:#ff6644;">Fusion timelines have always been optimistic</h3>
+    <br>
+    <table>
+        <tr><th>Prediction</th><th>Reality</th><th>Slip</th></tr>
+        <tr><td>ITER first plasma: 2016</td><td>Now 2033-2034</td><td class="red">+17 years</td></tr>
+        <tr><td>ITER D-T operations: 2023</td><td>Now 2039</td><td class="red">+16 years</td></tr>
+        <tr><td>CFS/SPARC first plasma: late 2025</td><td>Now 2027</td><td class="yellow">+2 years</td></tr>
+        <tr><td>Tokamak Q plateau since</td><td>1997 (29 years)</td><td class="red">No improvement</td></tr>
+    </table>
+    <br>
+    <p class="fragment" style="font-size:0.7em;">Every private fusion company in industry surveys has claimed commercialization within 10-15 years.<br><span class="red">None has delivered.</span></p>
+</section>
+
+<!-- SLIDE 13: Projected Milestones -->
+<section>
+    <h2>Realistic Projected Milestones</h2>
+    <table>
+        <tr><th>Year</th><th>Milestone</th><th>Confidence</th></tr>
+        <tr><td>2027</td><td>SPARC first plasma</td><td class="yellow">60-70%</td></tr>
+        <tr><td>2027-28</td><td>NIF Q &gt; 5 (laser upgrade)</td><td class="yellow">50-60%</td></tr>
+        <tr><td>2028-30</td><td>SPARC Q<sub>sci</sub> &gt; 2 (D-T)</td><td class="yellow">35-50%</td></tr>
+        <tr><td>~2030</td><td>NIF Q &gt; 10 (3 MJ laser)</td><td class="yellow">30-40%</td></tr>
+        <tr><td>2033-35</td><td>ITER first plasma</td><td class="yellow">60-70%</td></tr>
+        <tr style="border-top:2px solid #00d4ff;">
+            <td><strong>2032-37</strong></td><td><strong>First net-electricity fusion demo</strong></td><td class="yellow"><strong>30-50%</strong></td>
+        </tr>
+        <tr><td>2039+</td><td>ITER D-T operations (Q=10)</td><td class="yellow">50-60%</td></tr>
+        <tr><td><strong>2040s</strong></td><td><strong>First commercial fusion plant</strong></td><td class="yellow"><strong>20-40%</strong></td></tr>
+    </table>
+</section>
+
+<!-- SLIDE 14: The Probability Assessment -->
+<section>
+    <h2>Break-Even Power Generation by 2030?</h2>
+    <h3>Probability Assessment</h3>
+    <br>
+    <div style="width:80%; margin:0 auto; text-align:left;">
+        <p style="font-size:0.65em; margin-bottom:5px;">Q<sub>sci</sub> &gt; 10 demonstrated (NIF or SPARC)</p>
+        <div class="prob-bar">
+            <div class="prob-fill" style="width:48%; background:linear-gradient(90deg,#1a6633,#44ff88);">48%</div>
+            <div class="prob-label">Achievable</div>
+        </div>
+
+        <p style="font-size:0.65em; margin-bottom:5px;">Q<sub>sci</sub> &gt; 2 in new tokamak (SPARC)</p>
+        <div class="prob-bar">
+            <div class="prob-fill" style="width:42%; background:linear-gradient(90deg,#1a5533,#44dd88);">42%</div>
+            <div class="prob-label">Plausible</div>
+        </div>
+
+        <p style="font-size:0.65em; margin-bottom:5px; color:#ffcc00;">Any device generates net electricity (Q<sub>eng</sub> &gt; 1)</p>
+        <div class="prob-bar">
+            <div class="prob-fill" style="width:4%; background:linear-gradient(90deg,#663311,#ff6644);">4%</div>
+            <div class="prob-label" style="color:#ff6644;">Extremely unlikely</div>
+        </div>
+
+        <p style="font-size:0.65em; margin-bottom:5px;">Electricity delivered to the grid</p>
+        <div class="prob-bar">
+            <div class="prob-fill" style="width:2%; background:linear-gradient(90deg,#661111,#ff4444);">~1%</div>
+            <div class="prob-label" style="color:#ff4444;">Near impossible</div>
+        </div>
+
+        <p style="font-size:0.65em; margin-bottom:5px;">Commercial fusion power plant operating</p>
+        <div class="prob-bar">
+            <div class="prob-fill" style="width:1%; background:#ff2222;">&lt;1%</div>
+            <div class="prob-label" style="color:#ff4444;">Not happening</div>
+        </div>
+    </div>
+</section>
+
+<!-- SLIDE 15: The Answer -->
+<section>
+    <h2>The Bottom Line</h2>
+    <br>
+    <div class="big-number" style="font-size:4em;">3&ndash;5%</div>
+    <p style="font-size:0.9em;">Probability of break-even fusion<br>for power generation by end of 2030</p>
+    <br>
+    <div class="fragment">
+        <p style="font-size:0.7em; color:#8899bb;">The non-zero probability accounts for:</p>
+        <ul style="font-size:0.6em; max-width:600px; margin:0 auto;">
+            <li>Helion's unconventional direct-conversion approach</li>
+            <li>Potential unknown breakthroughs</li>
+            <li>China's massive state-led investment</li>
+        </ul>
+    </div>
+    <br>
+    <div class="fragment">
+        <p style="font-size:0.7em; color:#ffcc00;">More realistic timeline for first net electricity: <strong>2032&ndash;2037</strong></p>
+        <p style="font-size:0.7em; color:#ffcc00;">Commercial fusion power: <strong>2040s</strong></p>
+    </div>
+</section>
+
+<!-- SLIDE 16: Nuance -->
+<section>
+    <h2>The Nuanced View</h2>
+    <br>
+    <div class="two-col" style="font-size:0.75em;">
+        <div>
+            <h3 class="green">Real Progress</h3>
+            <ul>
+                <li>Q<sub>sci</sub> jumped from 0.7 to 4.13 in 4 years</li>
+                <li>HTS magnets proven at scale</li>
+                <li>53 companies, $15B+ invested</li>
+                <li>DOE Fusion Roadmap released</li>
+                <li>Multiple approaches being pursued</li>
+            </ul>
+        </div>
+        <div>
+            <h3 class="red">Hard Truths</h3>
+            <ul>
+                <li>No fusion device has generated electricity</li>
+                <li>Q<sub>eng</sub> is ~100x below breakeven</li>
+                <li>Tokamak Q stagnant since 1997</li>
+                <li>Tritium, materials, breeding all unsolved</li>
+                <li>Every timeline prediction has been late</li>
+            </ul>
+        </div>
+    </div>
+    <br>
+    <p class="fragment" style="font-size:0.75em; color:#00d4ff;">Fusion is no longer "always 30 years away."<br>It is probably <strong>10&ndash;20 years</strong> from first electricity and <strong>15&ndash;25 years</strong> from commercial significance.</p>
+</section>
+
+<!-- SLIDE 17: Key Takeaway -->
+<section>
+    <h2>Key Takeaway</h2>
+    <br>
+    <p style="font-size:0.9em; color:#fff; line-height:1.6;">
+        Scientific fusion milestones will continue to be achieved through 2030.<br>
+        <span class="green">Higher Q values are coming.</span>
+    </p>
+    <br>
+    <p style="font-size:0.9em; color:#fff; line-height:1.6;">
+        But scientific breakeven and power generation breakeven<br>
+        are separated by an <span class="red">enormous engineering chasm</span>.
+    </p>
+    <br>
+    <p class="fragment" style="font-size:1.0em; color:#00d4ff; font-weight:bold;">
+        The Q factor record will keep climbing.<br>
+        Your lights won't run on fusion before 2030.
+    </p>
+</section>
+
+<!-- SLIDE 18: Sources -->
+<section>
+    <h2>Sources</h2>
+    <div style="font-size:0.45em; text-align:left; max-width:700px; margin:0 auto; columns:2; column-gap:30px;">
+        <p>ITER - 60 Years of Progress (iter.org)</p>
+        <p>Fusion Energy Gain Factor (Wikipedia)</p>
+        <p>NIF Achieving Fusion Ignition (lasers.llnl.gov)</p>
+        <p>Fusion Breakeven Is a Science Breakthrough (Breakthrough Institute)</p>
+        <p>NIF Q=4.13 Record (Interesting Engineering, TechCrunch)</p>
+        <p>CFS/SPARC Updates (Fortune, CFS blog)</p>
+        <p>Private Fusion Companies 2025 (Science/AAAS)</p>
+        <p>Fusion Industry Association Global Report 2025</p>
+        <p>DOE Fusion S&T Roadmap (energy.gov)</p>
+        <p>US and China Fusion Funding (Neutron Bytes)</p>
+        <p>Fueling Fusion Reactors 2026 (Clean Energy Platform)</p>
+        <p>ITER Schedule (World Nuclear News)</p>
+        <p>Fusion Funding Growth (ANS Nuclear Newswire)</p>
+        <p>Advanced Materials for Fusion (C&EN/ACS)</p>
+        <p>MIT Energy Initiative - Funding the Fusion Revolution</p>
+        <p>Q-Values and Breakeven Explained (New Energy Times)</p>
+    </div>
+</section>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.js"></script>
+<script>
+    Reveal.initialize({
+        hash: true,
+        slideNumber: true,
+        transition: 'fade',
+        transitionSpeed: 'default',
+        backgroundTransition: 'fade',
+        center: true,
+        width: 1100,
+        height: 700,
+        margin: 0.05
+    });
+</script>
+</body>
+</html>
