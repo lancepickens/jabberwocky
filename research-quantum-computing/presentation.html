@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The State of Quantum Computing - March 2026</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/theme/black.min.css">
+    <style>
+        :root {
+            --r-background-color: #0a0a1a;
+            --r-main-color: #e0e0e0;
+            --r-heading-color: #00d4ff;
+            --r-link-color: #00d4ff;
+        }
+        .reveal {
+            font-size: 28px;
+        }
+        .reveal h1 {
+            font-size: 2.2em;
+            color: #00d4ff;
+            text-shadow: 0 0 20px rgba(0,212,255,0.3);
+        }
+        .reveal h2 {
+            font-size: 1.6em;
+            color: #00d4ff;
+        }
+        .reveal h3 {
+            font-size: 1.2em;
+            color: #7dd3fc;
+        }
+        .reveal .subtitle {
+            color: #94a3b8;
+            font-size: 0.9em;
+        }
+        .reveal table {
+            margin: 0 auto;
+            font-size: 0.7em;
+            border-collapse: collapse;
+        }
+        .reveal table th {
+            background: rgba(0,212,255,0.15);
+            color: #00d4ff;
+            padding: 8px 14px;
+            border-bottom: 2px solid #00d4ff;
+        }
+        .reveal table td {
+            padding: 6px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .reveal .highlight-box {
+            background: rgba(0,212,255,0.08);
+            border-left: 4px solid #00d4ff;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 0 8px 8px 0;
+            text-align: left;
+        }
+        .reveal .warning-box {
+            background: rgba(255,165,0,0.08);
+            border-left: 4px solid #ffa500;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 0 8px 8px 0;
+            text-align: left;
+        }
+        .reveal .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .reveal .stat-card {
+            background: rgba(0,212,255,0.06);
+            border: 1px solid rgba(0,212,255,0.2);
+            border-radius: 10px;
+            padding: 18px;
+            text-align: center;
+        }
+        .reveal .stat-card .number {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+        .reveal .stat-card .label {
+            font-size: 0.7em;
+            color: #94a3b8;
+            margin-top: 5px;
+        }
+        .reveal ul {
+            text-align: left;
+        }
+        .reveal li {
+            margin-bottom: 8px;
+            font-size: 0.85em;
+        }
+        .reveal .company-tag {
+            display: inline-block;
+            background: rgba(0,212,255,0.15);
+            color: #7dd3fc;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin: 2px;
+        }
+        .reveal .fragment.fade-in-then-semi-out.visible:not(.current-fragment) {
+            opacity: 0.4;
+        }
+        .reveal .slide-number {
+            color: #00d4ff;
+        }
+        .progress span {
+            background: #00d4ff !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- TITLE SLIDE -->
+            <section>
+                <h1>The State of Quantum Computing</h1>
+                <p class="subtitle">A Comprehensive Research Briefing</p>
+                <p class="subtitle">March 2026</p>
+            </section>
+
+            <!-- EXECUTIVE SUMMARY -->
+            <section>
+                <h2>Executive Summary</h2>
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="number">$1.8-3.5B</div>
+                        <div class="label">Global Market Size (2025)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="number">$97B</div>
+                        <div class="label">Projected Market by 2035</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="number">~100</div>
+                        <div class="label">Physical Qubits (Leading Systems)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="number">48</div>
+                        <div class="label">Error-Corrected Logical Qubits (Best)</div>
+                    </div>
+                </div>
+                <div class="highlight-box">
+                    The industry has shifted focus from raw qubit counts to error-corrected logical qubits. Real progress is being made, but broad commercial impact is likely in the early 2030s.
+                </div>
+            </section>
+
+            <!-- HARDWARE SECTION HEADER -->
+            <section>
+                <section>
+                    <h2>Quantum Hardware</h2>
+                    <p class="subtitle">The Current Landscape</p>
+                </section>
+
+                <!-- IBM -->
+                <section>
+                    <h3>IBM</h3>
+                    <ul>
+                        <li><strong>Nighthawk (2025):</strong> 120 qubits, 5,000 two-qubit gates</li>
+                        <li><strong>Kookaburra (2026):</strong> 3 chips linked into 4,158-qubit system</li>
+                        <li><strong>Quantum Loon:</strong> Real-time error decoding in 480ns using qLDPC codes</li>
+                        <li><strong>Starling (2029):</strong> ~200 logical qubits, 100M gates</li>
+                    </ul>
+                    <div class="highlight-box">
+                        IBM targets verified quantum advantage by end of 2026 and fault tolerance by 2029 -- the most detailed public roadmap in the industry.
+                    </div>
+                </section>
+
+                <!-- Google -->
+                <section>
+                    <h3>Google</h3>
+                    <ul>
+                        <li><strong>Willow Chip:</strong> 105 qubits</li>
+                        <li><strong>Gate Fidelities:</strong> 99.97% (1Q), 99.88% (2Q), 99.5% (readout)</li>
+                        <li><strong>Quantum Echoes (Oct 2025):</strong> First verifiable quantum advantage -- 13,000x faster than supercomputers</li>
+                    </ul>
+                    <div class="warning-box">
+                        <strong>Caveat:</strong> Advantage demonstrated on a carefully constructed benchmark, not a general-purpose commercial problem. Logical error rates (~0.14%) remain far above the ~0.0001% needed for large-scale algorithms.
+                    </div>
+                </section>
+
+                <!-- Quantinuum -->
+                <section>
+                    <h3>Quantinuum</h3>
+                    <ul>
+                        <li><strong>Helios (2025):</strong> 98 fully connected trapped-ion qubits</li>
+                        <li><strong>World's most accurate</strong> commercial quantum computer</li>
+                        <li>Single-qubit fidelity: <strong>99.9975%</strong></li>
+                        <li>Two-qubit fidelity: <strong>99.921%</strong></li>
+                        <li><strong>48 error-corrected logical qubits</strong> with 22x lower failure rates</li>
+                    </ul>
+                    <div class="highlight-box">
+                        Quantinuum leads in accuracy. Roadmap: Sol (192 qubits, 2027) and Apollo (full fault tolerance, 2029).
+                    </div>
+                </section>
+
+                <!-- IonQ -->
+                <section>
+                    <h3>IonQ</h3>
+                    <ul>
+                        <li><strong>Tempo (2025):</strong> 100 physical qubits; 256-qubit system planned for 2026</li>
+                        <li>99.9% single-qubit gate fidelity</li>
+                        <li>Shifted from ytterbium to barium atoms with microwave control</li>
+                    </ul>
+                    <div class="warning-box">
+                        <strong>Ambitious roadmap:</strong> 1,600 logical qubits (2028) scaling to 80,000 (2030). The 50x jump in two years warrants skepticism.
+                    </div>
+                </section>
+
+                <!-- Technology Comparison -->
+                <section>
+                    <h3>Technology Approaches</h3>
+                    <table>
+                        <thead>
+                            <tr><th>Approach</th><th>Leaders</th><th>Strengths</th><th>Weaknesses</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Superconducting</td><td>IBM, Google</td><td>Fast gates, scaling potential</td><td>Short coherence, extreme cooling</td></tr>
+                            <tr><td>Trapped Ions</td><td>Quantinuum, IonQ</td><td>Highest fidelity</td><td>Slower gates</td></tr>
+                            <tr><td>Neutral Atoms</td><td>QuEra, Pasqal</td><td>Natural scalability</td><td>Less proven</td></tr>
+                            <tr><td>Topological</td><td>Microsoft</td><td>Inherent error protection</td><td>Unproven at scale</td></tr>
+                            <tr><td>Annealing</td><td>D-Wave</td><td>Available today</td><td>Limited problem types</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+            </section>
+
+            <!-- SOFTWARE SECTION -->
+            <section>
+                <section>
+                    <h2>Software & Algorithms</h2>
+                    <p class="subtitle">The Programming Landscape</p>
+                </section>
+
+                <section>
+                    <h3>Major Frameworks</h3>
+                    <table>
+                        <thead>
+                            <tr><th>Framework</th><th>Provider</th><th>Key Strength</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Qiskit</td><td>IBM</td><td>Most popular; 83x fastest transpiler; C++ interface</td></tr>
+                            <tr><td>Cirq</td><td>Google</td><td>Low-level control; noise modeling</td></tr>
+                            <tr><td>PennyLane</td><td>Xanadu</td><td>Quantum ML; differentiable programming</td></tr>
+                            <tr><td>Braket</td><td>AWS</td><td>Multi-hardware cloud access</td></tr>
+                            <tr><td>Q#</td><td>Microsoft</td><td>Standalone quantum language</td></tr>
+                        </tbody>
+                    </table>
+                    <p class="subtitle" style="margin-top: 15px;">All major frameworks are Python-based (except Q#). Qiskit added a C++ interface in November 2025.</p>
+                </section>
+
+                <section>
+                    <h3>Key Algorithms</h3>
+                    <div style="text-align: left;">
+                        <p><strong>Theoretically Powerful, Not Yet Practical:</strong></p>
+                        <ul>
+                            <li>Shor's Algorithm (factoring) -- needs thousands of error-corrected qubits</li>
+                            <li>Grover's Algorithm (search) -- error correction overhead may negate advantage</li>
+                        </ul>
+                        <p><strong>Active Research, Near-Term Promise:</strong></p>
+                        <ul>
+                            <li>QAOA / VQE for combinatorial optimization</li>
+                            <li>Quantum chemistry simulation</li>
+                            <li>Quantum machine learning</li>
+                            <li>Quantum Monte Carlo for finance</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Software Challenges</h3>
+                    <ul>
+                        <li>No standard quantum programming language</li>
+                        <li>Limited portability across hardware platforms</li>
+                        <li>Debugging is fundamentally difficult (no-cloning theorem)</li>
+                        <li>Steep learning curve for classical programmers</li>
+                        <li>Fragmented tooling ecosystem</li>
+                    </ul>
+                </section>
+            </section>
+
+            <!-- APPLICATIONS SECTION -->
+            <section>
+                <section>
+                    <h2>Real-World Applications</h2>
+                    <p class="subtitle">Where Quantum Is Being Used Today</p>
+                </section>
+
+                <section>
+                    <h3>Three Levels of Quantum Advantage</h3>
+                    <div class="highlight-box">
+                        <strong>1. Benchmark Advantage</strong> -- Outperforming classical on contrived problems<br>
+                        <span style="color: #22c55e;">Status: Demonstrated (Google, 2025)</span>
+                    </div>
+                    <div class="highlight-box">
+                        <strong>2. Practical Advantage</strong> -- Outperforming classical on real-world problems<br>
+                        <span style="color: #fbbf24;">Status: Claimed by some vendors, mostly unverified</span>
+                    </div>
+                    <div class="highlight-box">
+                        <strong>3. Commercial Advantage</strong> -- Delivering measurable business value<br>
+                        <span style="color: #ef4444;">Status: Not yet achieved</span>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Drug Discovery</h3>
+                    <ul>
+                        <li><span class="company-tag">St. Jude</span> First experimentally validated quantum drug discovery (Nature Biotechnology)</li>
+                        <li><span class="company-tag">Roche</span> 3 Alzheimer's drug candidates via quantum simulation (18 months vs. 4-6 years typical)*</li>
+                        <li><span class="company-tag">AstraZeneca</span> Quantum-accelerated computational chemistry with AWS/IonQ/NVIDIA</li>
+                        <li><span class="company-tag">IBM + Moderna</span> Hybrid quantum-classical mRNA sequence simulation</li>
+                        <li><span class="company-tag">Pasqal</span> First quantum protein hydration analysis on neutral-atom hardware</li>
+                    </ul>
+                    <p class="subtitle">*Quantum likely accelerated one stage of a multi-step pipeline</p>
+                </section>
+
+                <section>
+                    <h3>Finance</h3>
+                    <ul>
+                        <li><span class="company-tag">HSBC + IBM</span> Improved corporate bond trading predictions</li>
+                        <li><span class="company-tag">Vanguard + IBM</span> Quantum-classical hybrid portfolio optimization</li>
+                        <li><span class="company-tag">Goldman Sachs</span> Risk analysis up to 25x faster on specific problems</li>
+                        <li><span class="company-tag">Intesa Sanpaolo</span> Quantum ML outperformed traditional fraud detection</li>
+                        <li><span class="company-tag">JPMorgan</span> Quantum algorithms for risk analysis with correlated market variables</li>
+                    </ul>
+                    <div class="highlight-box" style="margin-top: 10px;">
+                        Finance holds ~20% of quantum computing applications. Primary near-term value: hybrid quantum-classical methods for optimization and Monte Carlo simulation.
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Other Domains</h3>
+                    <ul>
+                        <li><strong>Logistics:</strong> IBM + vehicle manufacturer optimized 1,200 NYC delivery locations</li>
+                        <li><strong>Climate Science:</strong> Finer-scale climate simulations via quantum-meteorological partnerships</li>
+                        <li><strong>Cybersecurity:</strong> Post-quantum cryptography standards being deployed proactively</li>
+                        <li><strong>Materials Science:</strong> Quantum simulation for batteries, catalysts, and advanced materials</li>
+                    </ul>
+                </section>
+            </section>
+
+            <!-- CHALLENGES SECTION -->
+            <section>
+                <section>
+                    <h2>Key Challenges</h2>
+                    <p class="subtitle">What Stands in the Way</p>
+                </section>
+
+                <section>
+                    <h3>The Error Problem</h3>
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="number">120</div>
+                            <div class="label">Peer-reviewed QEC papers (Jan-Oct 2025, up from 36 in 2024)</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">95%</div>
+                            <div class="label">Of professionals say QEC is essential to scaling</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">480ns</div>
+                            <div class="label">IBM's real-time error decoding speed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">22x</div>
+                            <div class="label">Lower failure rates (Quantinuum logical qubits)</div>
+                        </div>
+                    </div>
+                    <p class="subtitle" style="margin-top: 10px;">Critical bottleneck: Real-time decoding must happen in &lt;1 microsecond, requiring specialized FPGA/ASIC hardware.</p>
+                </section>
+
+                <section>
+                    <h3>Scalability</h3>
+                    <ul>
+                        <li>Current best: ~100 physical qubits; fault tolerance needs thousands to millions</li>
+                        <li>Error correction overhead: 2:1 to 1000:1 physical-to-logical qubit ratio</li>
+                        <li>Extreme cooling required (15 millikelvins) for most systems</li>
+                        <li>Manufacturing and interconnect challenges unsolved at scale</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3>Other Critical Barriers</h3>
+                    <ul>
+                        <li><strong>Talent gap:</strong> The "ultimate bottleneck" -- insufficient QEC expertise</li>
+                        <li><strong>Software immaturity:</strong> No standard language, limited portability</li>
+                        <li><strong>Dequantization risk:</strong> Classical algorithms keep improving and matching some quantum speedups</li>
+                        <li><strong>Cost:</strong> Quantum computer access remains expensive and limited</li>
+                    </ul>
+                    <div class="warning-box" style="margin-top: 15px;">
+                        <strong>Reality check:</strong> No commercially relevant problem has been solved faster by a quantum computer in a way that couldn't be matched by improved classical algorithms.
+                    </div>
+                </section>
+            </section>
+
+            <!-- FUTURE OUTLOOK -->
+            <section>
+                <section>
+                    <h2>Future Outlook</h2>
+                    <p class="subtitle">Timeline and Predictions</p>
+                </section>
+
+                <section>
+                    <h3>Consolidated Timeline</h3>
+                    <table>
+                        <thead>
+                            <tr><th>Year</th><th>High-Confidence</th><th>Aspirational</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td><strong>2026</strong></td><td>QEC advances; IBM 4,158-qubit system</td><td>Verified quantum advantage</td></tr>
+                            <tr><td><strong>2027</strong></td><td>~10,000 two-qubit gates</td><td>Chemistry proof-of-concepts</td></tr>
+                            <tr><td><strong>2028</strong></td><td>~100 logical qubits</td><td>IonQ: 1,600 logical qubits</td></tr>
+                            <tr><td><strong>2029</strong></td><td>IBM Starling; Quantinuum Apollo</td><td>Useful error-corrected computers</td></tr>
+                            <tr><td><strong>2030</strong></td><td>Business applications emerging</td><td>IonQ: 80,000 logical qubits</td></tr>
+                            <tr><td><strong>2035</strong></td><td>--</td><td>$97B quantum market</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section>
+                    <h3>Investment Landscape</h3>
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="number">$10B</div>
+                            <div class="label">Quantinuum Valuation</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">$7B</div>
+                            <div class="label">PsiQuantum Valuation</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">$5.75B</div>
+                            <div class="label">SandboxAQ Valuation</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="number">+50%</div>
+                            <div class="label">YoY Startup Investment Growth (2024)</div>
+                        </div>
+                    </div>
+                    <p class="subtitle" style="margin-top: 10px;">DARPA offering up to $300M per award for utility-scale quantum demonstration by 2033.</p>
+                </section>
+
+                <section>
+                    <h3>Risks</h3>
+                    <div class="warning-box">
+                        <strong>Quantum Winter Risk:</strong> If fault-tolerant systems don't materialize by 2028-2029 as promised, the industry could face reduced funding and skepticism. Government backing should prevent total collapse.
+                    </div>
+                    <div class="highlight-box" style="margin-top: 15px;">
+                        <strong>Q-Day Risk:</strong> The day quantum computers can break current encryption is approaching. Organizations must deploy post-quantum cryptography proactively.
+                    </div>
+                </section>
+            </section>
+
+            <!-- KEY TAKEAWAYS -->
+            <section>
+                <h2>Key Takeaways</h2>
+                <ol style="text-align: left; font-size: 0.85em;">
+                    <li style="margin-bottom: 12px;"><strong>Real progress is happening</strong> -- error correction, fidelity, and logical qubit counts are all advancing measurably</li>
+                    <li style="margin-bottom: 12px;"><strong>True commercial advantage has not yet been achieved</strong> for any real-world problem</li>
+                    <li style="margin-bottom: 12px;"><strong>Vendor timelines are aspirational</strong> -- historically optimistic by 2-3 years</li>
+                    <li style="margin-bottom: 12px;"><strong>Hybrid quantum-classical</strong> approaches offer the most near-term value</li>
+                    <li style="margin-bottom: 12px;"><strong>The 2028-2030 window</strong> is when promises face their hardest test</li>
+                    <li style="margin-bottom: 12px;"><strong>Broad practical impact</strong> is most likely in the early 2030s</li>
+                </ol>
+            </section>
+
+            <!-- WHAT SHOULD ORGANIZATIONS DO -->
+            <section>
+                <h2>What Should Organizations Do Now?</h2>
+                <div class="highlight-box">
+                    <strong>1. Build quantum literacy</strong> -- Understand the technology and its realistic potential
+                </div>
+                <div class="highlight-box">
+                    <strong>2. Experiment with hybrid approaches</strong> -- Identify optimization and simulation problems that could benefit
+                </div>
+                <div class="highlight-box">
+                    <strong>3. Deploy post-quantum cryptography</strong> -- Protect against future quantum threats now
+                </div>
+                <div class="highlight-box">
+                    <strong>4. Monitor, don't overbuild</strong> -- Track progress without over-investing in immature technology
+                </div>
+                <div class="highlight-box">
+                    <strong>5. Cultivate talent</strong> -- The workforce gap is the ultimate bottleneck
+                </div>
+            </section>
+
+            <!-- CLOSING -->
+            <section>
+                <h1>The Question Is No Longer "If" But "When"</h1>
+                <p style="font-size: 1.1em; color: #94a3b8; margin-top: 30px;">
+                    The commercially optimistic timelines from 2018-2020 were wrong,<br>
+                    but the longer-horizon trajectories are becoming credible.
+                </p>
+                <p style="font-size: 0.8em; color: #475569; margin-top: 40px;">
+                    Research compiled March 2026 | Sources include IBM, Google, Quantinuum, IonQ, McKinsey, Forrester, Riverlane, and peer-reviewed publications
+                </p>
+            </section>
+
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: true,
+            transition: 'slide',
+            transitionSpeed: 'default',
+            backgroundTransition: 'fade',
+            center: true,
+            width: 1200,
+            height: 700,
+            margin: 0.1
+        });
+    </script>
+</body>
+</html>
