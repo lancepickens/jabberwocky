@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+demo_out/
+splat_out/
+.pytest_cache/

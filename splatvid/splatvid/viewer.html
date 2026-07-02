@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>splatvid viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; color: #cfd6e4;
+               font: 13px/1.5 system-ui, sans-serif; }
+  #c { width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; top: 10px; left: 12px; pointer-events: none;
+         text-shadow: 0 1px 3px #000; user-select: none; }
+  #hud b { color: #fff; }
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+          background: rgba(11,14,19,.85); font-size: 18px; }
+  #drop.show { display: flex; }
+  input[type=file] { position: fixed; bottom: 12px; left: 12px; color: #cfd6e4; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><b>splatvid</b> · <span id="stat">loading scene.splat…</span><br>
+drag: orbit · shift/right-drag: pan · wheel: zoom</div>
+<div id="drop">drop a .splat file anywhere</div>
+<input type="file" id="file" accept=".splat">
+<script>
+"use strict";
+const canvas = document.getElementById("c");
+const stat = document.getElementById("stat");
+const gl = canvas.getContext("webgl2", { antialias: false });
+if (!gl) { stat.textContent = "WebGL2 not available"; throw new Error("no webgl2"); }
+
+const VS = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+in vec2 corner;         // quad corner in [-1, 1]
+in float sortedIndex;   // splat index, back-to-front order
+uniform sampler2D uData;
+uniform int uTexW;
+uniform mat4 uView, uProj;
+uniform vec2 uFocal, uViewport;
+out vec4 vColor;
+out vec2 vG;            // gaussian-space coordinate (2 sigma units)
+
+vec4 texel(int i, int k) {
+  int idx = i * 4 + k;
+  return texelFetch(uData, ivec2(idx % uTexW, idx / uTexW), 0);
+}
+void main() {
+  int i = int(sortedIndex + 0.5);
+  vec4 t0 = texel(i, 0);           // xyz, opacity
+  vec4 t1 = texel(i, 1);           // scale xyz
+  vec4 t2 = texel(i, 2);           // quat wxyz
+  vec4 t3 = texel(i, 3);           // rgb
+  vec3 center = t0.xyz;
+  vec4 cam = uView * vec4(center, 1.0);
+  float z = -cam.z;                // camera looks down -z; positive depth
+  if (z < 0.05) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+
+  // 3D covariance from quaternion + scale.
+  vec4 q = normalize(t2);
+  float w = q.x, x = q.y, y = q.z, zz = q.w;
+  mat3 R = mat3(
+    1.0-2.0*(y*y+zz*zz), 2.0*(x*y+w*zz),     2.0*(x*zz-w*y),
+    2.0*(x*y-w*zz),      1.0-2.0*(x*x+zz*zz), 2.0*(y*zz+w*x),
+    2.0*(x*zz+w*y),      2.0*(y*zz-w*x),     1.0-2.0*(x*x+y*y));
+  mat3 S = mat3(t1.x,0,0, 0,t1.y,0, 0,0,t1.z);
+  mat3 M = R * S;
+  mat3 cov3d = M * transpose(M);
+
+  // Rotation part of the view matrix, with the z row negated so the
+  // covariance math lives in a +z-forward frame.
+  mat3 W = mat3(uView);
+  W = mat3(vec3(W[0].xy, -W[0].z), vec3(W[1].xy, -W[1].z), vec3(W[2].xy, -W[2].z));
+  mat3 J = mat3(
+    uFocal.x / z, 0.0, 0.0,
+    0.0, uFocal.y / z, 0.0,
+    -uFocal.x * cam.x / (z*z), -uFocal.y * cam.y / (z*z), 0.0);
+  mat3 T = J * W;
+  mat3 cov2d = T * cov3d * transpose(T);
+  float a = cov2d[0][0] + 0.3, b = cov2d[1][0], c = cov2d[1][1] + 0.3;
+
+  float mid = 0.5 * (a + c);
+  float disc = sqrt(max(0.01, mid * mid - (a * c - b * b)));
+  float l1 = mid + disc, l2 = max(mid - disc, 0.01);
+  vec2 e1 = normalize(vec2(b, l1 - a));
+  if (abs(b) < 1e-9 && a >= c) e1 = vec2(1.0, 0.0);
+  if (abs(b) < 1e-9 && a < c) e1 = vec2(0.0, 1.0);
+  vec2 e2 = vec2(-e1.y, e1.x);
+  vec2 axis1 = e1 * sqrt(l1) * 2.0;   // 2 sigma
+  vec2 axis2 = e2 * sqrt(l2) * 2.0;
+
+  vec4 clip = uProj * cam;
+  vec2 ndc = clip.xy / clip.w;
+  vec2 off = (corner.x * axis1 + corner.y * axis2) * 2.0 / uViewport;
+  gl_Position = vec4(ndc + off, 0.0, 1.0);
+  vG = corner;
+  vColor = vec4(t3.rgb, t0.w);
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+in vec4 vColor;
+in vec2 vG;
+out vec4 frag;
+void main() {
+  float m2 = 4.0 * dot(vG, vG);        // Mahalanobis^2 (corner is in 2-sigma units)
+  float alpha = vColor.a * exp(-0.5 * m2);
+  if (alpha < 0.004) discard;
+  frag = vec4(vColor.rgb * alpha, alpha);   // premultiplied
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const U = n => gl.getUniformLocation(prog, n);
+
+const quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const locCorner = gl.getAttribLocation(prog, "corner");
+gl.enableVertexAttribArray(locCorner);
+gl.vertexAttribPointer(locCorner, 2, gl.FLOAT, false, 0, 0);
+
+const idxBuf = gl.createBuffer();
+const locIdx = gl.getAttribLocation(prog, "sortedIndex");
+gl.bindBuffer(gl.ARRAY_BUFFER, idxBuf);
+gl.enableVertexAttribArray(locIdx);
+gl.vertexAttribPointer(locIdx, 1, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(locIdx, 1);
+
+gl.disable(gl.DEPTH_TEST);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+let N = 0, positions = null, order = null, dataTex = null;
+let center = [0, 0, 0], sceneRadius = 1;
+
+function loadSplat(buffer) {
+  const n = Math.floor(buffer.byteLength / 32);
+  const f32 = new Float32Array(buffer);
+  const u8 = new Uint8Array(buffer);
+  N = n;
+  positions = new Float32Array(n * 3);
+  const texW = 1024;
+  const texH = Math.max(1, Math.ceil((n * 4) / texW));
+  const tex = new Float32Array(texW * texH * 4);
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i++) {
+    const fo = i * 8, bo = i * 32;
+    const x = f32[fo], y = f32[fo+1], z = f32[fo+2];
+    positions[i*3] = x; positions[i*3+1] = y; positions[i*3+2] = z;
+    cx += x; cy += y; cz += z;
+    const t = i * 16;
+    tex[t]   = x; tex[t+1] = y; tex[t+2] = z; tex[t+3] = u8[bo+27] / 255;   // opacity
+    tex[t+4] = f32[fo+3]; tex[t+5] = f32[fo+4]; tex[t+6] = f32[fo+5];      // scale
+    tex[t+8]  = (u8[bo+28]-128)/128; tex[t+9]  = (u8[bo+29]-128)/128;      // quat wxyz
+    tex[t+10] = (u8[bo+30]-128)/128; tex[t+11] = (u8[bo+31]-128)/128;
+    tex[t+12] = u8[bo+24]/255; tex[t+13] = u8[bo+25]/255; tex[t+14] = u8[bo+26]/255;
+  }
+  center = [cx/n, cy/n, cz/n];
+  let r2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i*3]-center[0], dy = positions[i*3+1]-center[1], dz = positions[i*3+2]-center[2];
+    r2 = Math.max(r2, dx*dx+dy*dy+dz*dz);
+  }
+  sceneRadius = Math.sqrt(r2) || 1;
+  cam.target = center.slice();
+  cam.radius = sceneRadius * 1.8;
+
+  if (dataTex) gl.deleteTexture(dataTex);
+  dataTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, dataTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, texW, texH, 0, gl.RGBA, gl.FLOAT, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.uniform1i(U("uData"), 0);
+  gl.uniform1i(U("uTexW"), texW);
+
+  order = new Float32Array(n);
+  for (let i = 0; i < n; i++) order[i] = i;
+  needSort = true;
+  stat.textContent = `${n.toLocaleString()} splats`;
+}
+
+// Counting sort back-to-front along the view direction (65536 buckets).
+const BUCKETS = 65536;
+const counts = new Uint32Array(BUCKETS);
+function sortSplats(viewZ) {
+  if (!N) return;
+  const d = new Float32Array(N);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < N; i++) {
+    const v = viewZ[0]*positions[i*3] + viewZ[1]*positions[i*3+1] + viewZ[2]*positions[i*3+2];
+    d[i] = v;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const s = (BUCKETS - 1) / Math.max(hi - lo, 1e-9);
+  counts.fill(0);
+  const bucket = new Uint32Array(N);
+  for (let i = 0; i < N; i++) { const b = ((d[i] - lo) * s) | 0; bucket[i] = b; counts[b]++; }
+  let acc = 0;
+  const starts = new Uint32Array(BUCKETS);
+  for (let b = 0; b < BUCKETS; b++) { starts[b] = acc; acc += counts[b]; }
+  for (let i = 0; i < N; i++) order[starts[bucket[i]]++] = i;   // ascending z: far first
+  gl.bindBuffer(gl.ARRAY_BUFFER, idxBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, order, gl.DYNAMIC_DRAW);
+}
+
+// --- camera -----------------------------------------------------------
+const cam = { theta: 0.4, phi: 1.2, radius: 4, target: [0, 0, 0], fov: 60 * Math.PI / 180 };
+function viewMatrix() {
+  const ct = Math.cos(cam.theta), st = Math.sin(cam.theta);
+  const cp = Math.cos(cam.phi), sp = Math.sin(cam.phi);
+  const eye = [
+    cam.target[0] + cam.radius * sp * ct,
+    cam.target[1] + cam.radius * cp,
+    cam.target[2] + cam.radius * sp * st,
+  ];
+  const f = norm3(sub3(cam.target, eye));       // forward
+  const r = norm3(cross3(f, [0, 1, 0]));
+  const u = cross3(r, f);
+  const zax = [-f[0], -f[1], -f[2]];            // camera looks down -z
+  // Column-major 4x4.
+  return [
+    r[0], u[0], zax[0], 0,
+    r[1], u[1], zax[1], 0,
+    r[2], u[2], zax[2], 0,
+    -dot3(r, eye), -dot3(u, eye), -dot3(zax, eye), 1,
+  ];
+}
+function projMatrix(aspect) {
+  const f = 1 / Math.tan(cam.fov / 2);
+  const near = 0.01, far = 1000;
+  return [
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) / (near - far), -1,
+    0, 0, (2 * far * near) / (near - far), 0,
+  ];
+}
+const sub3 = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const dot3 = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross3 = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm3 = a => { const l = Math.hypot(...a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; };
+
+// --- input ------------------------------------------------------------
+let dragging = 0;  // 1 = orbit, 2 = pan
+let lastX = 0, lastY = 0, needSort = false;
+canvas.addEventListener("pointerdown", e => {
+  dragging = (e.button === 2 || e.shiftKey) ? 2 : 1;
+  lastX = e.clientX; lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointerup", () => dragging = 0);
+canvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  if (dragging === 1) {
+    cam.theta += dx * 0.005;
+    cam.phi = Math.min(Math.PI - 0.05, Math.max(0.05, cam.phi - dy * 0.005));
+  } else {
+    const v = viewMatrix();
+    const scale = cam.radius * 0.0015;
+    cam.target[0] -= (v[0]*dx - v[1]*dy) * scale;
+    cam.target[1] -= (v[4]*dx - v[5]*dy) * scale;
+    cam.target[2] -= (v[8]*dx - v[9]*dy) * scale;
+  }
+  needSort = true;
+});
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  cam.radius *= Math.exp(e.deltaY * 0.001);
+  needSort = true;
+}, { passive: false });
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+// --- loading ----------------------------------------------------------
+document.getElementById("file").addEventListener("change", async e => {
+  if (e.target.files[0]) loadSplat(await e.target.files[0].arrayBuffer());
+});
+const dropEl = document.getElementById("drop");
+addEventListener("dragover", e => { e.preventDefault(); dropEl.classList.add("show"); });
+addEventListener("dragleave", () => dropEl.classList.remove("show"));
+addEventListener("drop", async e => {
+  e.preventDefault(); dropEl.classList.remove("show");
+  const f = e.dataTransfer.files[0];
+  if (f) loadSplat(await f.arrayBuffer());
+});
+fetch("scene.splat")
+  .then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
+  .then(loadSplat)
+  .catch(() => { stat.textContent = "no scene.splat next to this page — drop a .splat file"; });
+
+// --- render loop ------------------------------------------------------
+let lastSortZ = null, frames = 0, lastFpsT = performance.now();
+function frame() {
+  requestAnimationFrame(frame);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+  gl.clearColor(0.043, 0.055, 0.075, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (!N) return;
+
+  const v = viewMatrix();
+  const viewZ = [v[2], v[6], v[10]];  // third row = camera z axis in world
+  if (needSort || !lastSortZ || dot3(viewZ, lastSortZ) < 0.999) {
+    // Ascending dot(pos, camera z-axis) == descending distance along the
+    // viewing direction: farthest splats first (back-to-front blending).
+    sortSplats(viewZ);
+    lastSortZ = viewZ.slice();
+    needSort = false;
+  }
+  const focalPx = 0.5 * h / Math.tan(cam.fov / 2);
+  gl.uniformMatrix4fv(U("uView"), false, new Float32Array(v));
+  gl.uniformMatrix4fv(U("uProj"), false, new Float32Array(projMatrix(w / h)));
+  gl.uniform2f(U("uFocal"), focalPx, focalPx);
+  gl.uniform2f(U("uViewport"), w, h);
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N);
+
+  frames++;
+  const now = performance.now();
+  if (now - lastFpsT > 1000) {
+    if (N) stat.textContent = `${N.toLocaleString()} splats · ${frames} fps`;
+    frames = 0; lastFpsT = now;
+  }
+}
+frame();
+</script>
+</body>
+</html>
