@@ -1,1 +1,5 @@
 Jabberwocky test repo
+
+Projects:
+- splatvid/  — video -> 3D gaussian splat reconstruction, from scratch (see splatvid/README.md)
+- scratch/tpv-design/ — TPV detailed-balance design study

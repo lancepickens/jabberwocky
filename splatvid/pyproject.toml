@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splatvid"
+version = "0.1.0"
+description = "Reconstruct a 3D gaussian-splat scene from a video, from scratch: SfM, differentiable rasterizer, trainer, and web viewer."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "opencv-python-headless>=4.8",
+    "torch>=2.0",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+splatvid = "splatvid.cli:main"
+
+[tool.setuptools]
+packages = ["splatvid"]
+
+[tool.setuptools.package-data]
+splatvid = ["viewer.html"]
