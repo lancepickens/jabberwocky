@@ -12,6 +12,18 @@ import time
 log = logging.getLogger("splatvid")
 
 
+def pick_device() -> str:
+    """Best available torch device: cuda > mps (Apple Silicon) > cpu."""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def _viewer_src() -> str:
     return os.path.join(os.path.dirname(__file__), "viewer.html")
 
@@ -126,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                         "raise on a GPU)")
     r.add_argument("--max-gaussians", type=int, default=60_000)
     r.add_argument("--device", default="auto",
-                   help="'cpu', 'cuda', or 'auto' (default)")
+                   help="'cpu', 'cuda', 'mps', or 'auto' (default: best available)")
     r.add_argument("--turntable", action="store_true",
                    help="also render an orbit video of the result")
     r.set_defaults(fn=cmd_reconstruct)
@@ -142,10 +154,12 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    if getattr(args, "device", None) in ("auto", "mps"):
+        # A rarely-implemented op should fall back to CPU rather than abort;
+        # must be set before torch initializes its MPS backend.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     if getattr(args, "device", None) == "auto":
-        import torch
-
-        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+        args.device = pick_device()
         log.info("Using device: %s", args.device)
     return args.fn(args)
 
