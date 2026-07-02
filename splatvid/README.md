@@ -34,8 +34,11 @@ cd splatvid
 pip install -e .          # or: pip install -e '.[dev]' for tests
 ```
 
-Requires Python ≥ 3.10. CPU-only PyTorch is fine; CUDA is used
-automatically when available and makes training much faster.
+Requires Python ≥ 3.10. CPU-only PyTorch is fine; the best available
+device is picked automatically (CUDA → Apple-Silicon MPS → CPU) and makes
+training much faster. On M-series Macs, see
+[docs/performance-and-roadmap.md](docs/performance-and-roadmap.md) for
+benchmarking (`scripts/bench_render.py`) and recommended settings.
 
 ## Use
 
@@ -82,6 +85,25 @@ splatvid view demo_out
 This renders a synthetic orbit video of a procedurally generated scene
 with the package's own rasterizer, then reconstructs it from pixels alone
 — the same path a real video takes.
+
+## Documentation
+
+Extensive documentation lives in [`docs/`](docs/README.md):
+
+- [`docs/explainer.html`](docs/explainer.html) — a self-contained, illustrated
+  explainer of the whole pipeline (open directly in a browser; includes an
+  interactive alpha-compositing demo).
+- [`docs/pipeline-overview.md`](docs/pipeline-overview.md) — architecture,
+  data flow, and coordinate conventions.
+- [`docs/structure-from-motion.md`](docs/structure-from-motion.md) — features,
+  epipolar geometry, PnP, triangulation, and bundle adjustment in depth.
+- [`docs/gaussian-splatting.md`](docs/gaussian-splatting.md) — the gaussian
+  representation, EWA projection, the differentiable tile rasterizer,
+  training, and densification.
+- [`docs/formats-and-viewer.md`](docs/formats-and-viewer.md) — byte-level
+  `.ply`/`.splat` layouts and how the WebGL viewer works.
+- [`docs/performance-and-roadmap.md`](docs/performance-and-roadmap.md) —
+  Apple Silicon / device selection, benchmarking, and planned improvements.
 
 ## Tests
 

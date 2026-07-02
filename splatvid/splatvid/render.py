@@ -158,11 +158,17 @@ def render(
 
     n_tx = (width + TILE - 1) // TILE
     n_ty = (height + TILE - 1) // TILE
-    # Tile-index bounds per gaussian (inclusive).
-    tx0 = ((g_u.detach() - g_rad) / TILE).floor().clamp(0, n_tx - 1).long()
-    tx1 = ((g_u.detach() + g_rad) / TILE).floor().clamp(0, n_tx - 1).long()
-    ty0 = ((g_v.detach() - g_rad) / TILE).floor().clamp(0, n_ty - 1).long()
-    ty1 = ((g_v.detach() + g_rad) / TILE).floor().clamp(0, n_ty - 1).long()
+    # Tile-index bounds per gaussian (inclusive). Binning is pure
+    # bookkeeping, so it runs on the CPU: on GPU/MPS devices this avoids a
+    # blocking device sync per tile inside the Python loop below — only the
+    # final gather indices are shipped to the device.
+    u_c = g_u.detach().cpu()
+    v_c = g_v.detach().cpu()
+    rad_c = g_rad.cpu()
+    tx0 = ((u_c - rad_c) / TILE).floor().clamp(0, n_tx - 1).long()
+    tx1 = ((u_c + rad_c) / TILE).floor().clamp(0, n_tx - 1).long()
+    ty0 = ((v_c - rad_c) / TILE).floor().clamp(0, n_ty - 1).long()
+    ty1 = ((v_c + rad_c) / TILE).floor().clamp(0, n_ty - 1).long()
 
     ys = torch.arange(height, device=dev, dtype=torch.float32) + 0.5
     xs = torch.arange(width, device=dev, dtype=torch.float32) + 0.5
@@ -178,7 +184,8 @@ def render(
             tmask = (tx >= tx0[row_idx]) & (tx <= tx1[row_idx])
             if not bool(tmask.any()):
                 continue
-            idx = row_idx[tmask][:max_per_tile]  # front-most first (pre-sorted)
+            # Front-most first (pre-sorted); indices to the device lazily.
+            idx = row_idx[tmask][:max_per_tile].to(dev)
             x_lo, x_hi = tx * TILE, min((tx + 1) * TILE, width)
             px = xs[x_lo:x_hi]
 

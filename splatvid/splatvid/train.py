@@ -206,8 +206,7 @@ def render_turntable(
     size: int = 480,
 ) -> None:
     """Render an orbit around the scene to a video file (sanity-check output)."""
-    import cv2 as _cv2
-
+    dev = model.xyz.device
     C = rec.camera_centers()
     center_pts = np.median(rec.points, axis=0)
     rig_center = C.mean(axis=0)
@@ -216,8 +215,8 @@ def render_turntable(
 
     s = size / max(rec.width, rec.height)
     w, h = int(rec.width * s), int(rec.height * s)
-    vw = _cv2.VideoWriter(
-        out_path, _cv2.VideoWriter_fourcc(*"mp4v"), 24, (w, h)
+    vw = cv2.VideoWriter(
+        out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (w, h)
     )
     with torch.no_grad():
         for k in range(n_frames):
@@ -233,11 +232,11 @@ def render_turntable(
             t = -R @ eye
             img, _ = render_model(
                 model,
-                torch.tensor(R, dtype=torch.float32),
-                torch.tensor(t, dtype=torch.float32),
+                torch.tensor(R, dtype=torch.float32, device=dev),
+                torch.tensor(t, dtype=torch.float32, device=dev),
                 rec.focal * s, rec.cx * s, rec.cy * s, w, h,
             )
-            frame = (img.numpy() * 255).clip(0, 255).astype(np.uint8)
+            frame = (img.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
             vw.write(frame[:, :, ::-1])
     vw.release()
     log.info("Wrote turntable video: %s", out_path)
