@@ -172,7 +172,7 @@ def train(
 
         if it % cfg.log_every == 0 or it == cfg.iterations:
             msg = (
-                f"iter {it}/{cfg.iterations}  loss {float(loss):.4f}  "
+                f"iter {it}/{cfg.iterations}  loss {float(loss.detach()):.4f}  "
                 f"psnr {np.mean(recent_psnr):.2f} dB  gaussians {model.num_gaussians}"
             )
             log.info(msg)

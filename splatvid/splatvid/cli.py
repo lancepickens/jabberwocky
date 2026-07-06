@@ -92,6 +92,54 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Verify torch + the chosen device actually render correctly here.
+
+    Made for Apple-Silicon Macs: run `splatvid doctor` on the machine you
+    intend to train on to confirm the MPS backend produces the same image
+    and gradients as the CPU reference before committing to a long run.
+    """
+    from .diagnostics import collect_environment, run_selfcheck
+
+    env = collect_environment(args.device)
+    log.info("Environment:")
+    for k, v in env.items():
+        log.info("  %-16s %s", k, v)
+
+    if args.device == "mps" and not env["mps_available"]:
+        log.error(
+            "Requested --device mps but torch reports MPS unavailable. "
+            "Need macOS 12.3+, an Apple-Silicon Mac, and a torch build with "
+            "MPS (mps_built above must be True). Install the current release: "
+            "pip install --upgrade torch."
+        )
+        return 2
+
+    log.info("Running rasterizer self-check on device: %s ...", args.device)
+    report = run_selfcheck(args.device)
+    if args.device != "cpu":
+        log.info(
+            "  image vs CPU: max diff %.2e   gradients vs CPU: %.2f%%",
+            report.image_max_diff, report.grad_rel_diff * 100.0,
+        )
+    if report.ok:
+        log.info("PASS: %s renders correctly. splatvid will work on this machine.",
+                 args.device)
+        if args.device == "cpu" and env["mps_available"]:
+            log.info(
+                "Tip: MPS is available here — re-run `splatvid doctor --device mps` "
+                "and, if it passes, train with `--device mps` for a big speedup."
+            )
+        return 0
+    log.error("FAIL: %s", report.error or "self-check failed")
+    if args.device != "cpu":
+        log.error(
+            "Fall back to CPU training (`--device cpu`) and/or upgrade torch "
+            "(`pip install --upgrade torch`). Please report the torch version above."
+        )
+    return 1
+
+
 def cmd_view(args: argparse.Namespace) -> int:
     """Serve an output directory (or a bare .splat) in the bundled viewer."""
     import functools
@@ -147,6 +195,13 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("path", help="output directory or .splat file")
     v.add_argument("--port", type=int, default=8000)
     v.set_defaults(fn=cmd_view)
+
+    d = sub.add_parser(
+        "doctor", help="check torch + device (MPS on Apple Silicon) work here"
+    )
+    d.add_argument("--device", default="auto",
+                   help="'cpu', 'cuda', 'mps', or 'auto' (default: best available)")
+    d.set_defaults(fn=cmd_doctor)
 
     args = p.parse_args(argv)
     logging.basicConfig(

@@ -36,13 +36,23 @@ pip install -e .          # or: pip install -e '.[dev]' for tests
 
 Requires Python ≥ 3.10. CPU-only PyTorch is fine; the best available
 device is picked automatically (CUDA → Apple-Silicon MPS → CPU) and makes
-training much faster. On M-series Macs, see
-[docs/performance-and-roadmap.md](docs/performance-and-roadmap.md) for
-benchmarking (`scripts/bench_render.py`) and recommended settings.
+training much faster. On an M-series Mac (M1–M5), verify the Metal (MPS)
+backend renders correctly on your machine before a long run:
+
+```bash
+splatvid doctor        # checks torch + MPS produce the same result as CPU
+```
+
+See [docs/performance-and-roadmap.md](docs/performance-and-roadmap.md) for
+what `doctor` checks, benchmarking (`scripts/bench_render.py`), and
+recommended M-series settings.
 
 ## Use
 
 ```bash
+# Check torch + your device (MPS on Apple Silicon) render correctly here
+splatvid doctor
+
 # Reconstruct a scene from a video
 splatvid reconstruct my_video.mp4 -o out/
 
@@ -132,7 +142,8 @@ splatvid/
   train.py      optimization loop, turntable rendering
   export.py     .ply / .splat writers
   viewer.html   self-contained WebGL2 splat viewer
-  cli.py        `splatvid reconstruct` / `splatvid view`
+  cli.py        `splatvid reconstruct` / `view` / `doctor`
+  diagnostics.py device self-check (CPU/MPS/CUDA parity) behind `doctor`
   synthetic.py  procedural scene + video generator (tests/demo)
 ```
 
