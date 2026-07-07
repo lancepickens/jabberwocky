@@ -66,6 +66,8 @@ def fuse_tsdf(
     depth_trunc: float | None = None,
     target_faces: int | None = 200_000,
     max_render_dim: int = 480,
+    clean: bool = True,
+    min_cluster_frac: float = 0.001,  # drop clusters < 0.1% of total triangles
     bg=None,
 ):
     """TSDF-fuse splat depth+colour from every registered camera → Open3D mesh.
@@ -112,6 +114,20 @@ def fuse_tsdf(
         vol.integrate(rgbd, intr, extrinsic)
         n += 1
     mesh = vol.extract_triangle_mesh()
+    if clean:
+        # Drop small disconnected floater blobs so the mesh is a cleaner surface
+        # than the splat it came from — important because depth-supervising the
+        # splat against a *self-derived* mesh is otherwise circular (a mesh that
+        # still contains the splat's floaters can't pull them in).
+        clusters, n_tri, _ = mesh.cluster_connected_triangles()
+        clusters = np.asarray(clusters)
+        n_tri = np.asarray(n_tri)
+        if n_tri.size:
+            # Threshold on a fraction of TOTAL triangles (not the largest
+            # cluster) so separate real objects survive and only tiny specks go.
+            thresh = max(int(n_tri.sum() * min_cluster_frac), 20)
+            keep = n_tri >= thresh
+            mesh.remove_triangles_by_mask(~keep[clusters])
     if target_faces is not None and len(mesh.triangles) > target_faces:
         mesh = mesh.simplify_quadric_decimation(int(target_faces))
     mesh.remove_degenerate_triangles()
