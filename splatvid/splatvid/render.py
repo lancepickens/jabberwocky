@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
+import torch.nn.functional as F
 
 TILE = 16
 
@@ -246,23 +247,41 @@ def render_model(model, R, t, focal, cx, cy, width, height, bg=None, **kw):
     )
 
 
-def render_features(model, shader, R, t, focal, cx, cy, width, height, bg=None, **kw):
+def render_features(
+    model, shader, R, t, focal, cx, cy, width, height,
+    bg=None, render_scale=1.0, **kw,
+):
     """Neural render: splat per-gaussian features, then decode with ``shader``.
 
-    Returns (rgb (H, W, 3), RenderInfo). ``bg`` defaults to a zero feature
-    vector so the decoded background comes entirely from the shader. Requires
-    a model built with ``feature_dim > 0``.
+    Returns (rgb (height, width, 3), RenderInfo). ``bg`` defaults to a zero
+    feature vector so the decoded background comes entirely from the shader.
+    With ``render_scale < 1`` the features are splatted at reduced resolution
+    (~1/scale^2 cheaper) and the shader upsamples to full size; the returned
+    alpha/depth are upsampled to match. Requires a model with feature_dim > 0.
     """
     feat = model.get_feature()
     if feat is None:
         raise ValueError("render_features needs a GaussianModel with feature_dim > 0")
+    s = render_scale
+    if s != 1.0:
+        lw, lh = max(1, round(width * s)), max(1, round(height * s))
+        lf, lcx, lcy = focal * s, cx * s, cy * s
+    else:
+        lw, lh, lf, lcx, lcy = width, height, focal, cx, cy
     feat_map, info = render(
         model.xyz,
         model.get_scale(),
         model.get_quat(),
         feat,
         model.get_opacity(),
-        R, t, focal, cx, cy, width, height, bg=bg, return_aux=True, **kw,
+        R, t, lf, lcx, lcy, lw, lh, bg=bg, return_aux=True, **kw,
     )
-    rgb = shader(feat_map, info.alpha, info.depth)
+    rgb = shader(feat_map, info.alpha, info.depth, out_size=(height, width))
+    if s != 1.0:
+        info.alpha = F.interpolate(
+            info.alpha[None, None], size=(height, width), mode="bilinear", align_corners=False
+        )[0, 0]
+        info.depth = F.interpolate(
+            info.depth[None, None], size=(height, width), mode="bilinear", align_corners=False
+        )[0, 0]
     return rgb, info

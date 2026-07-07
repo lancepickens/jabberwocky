@@ -42,9 +42,12 @@ class IdentityShader(nn.Module):
         feat_map: torch.Tensor,
         alpha: torch.Tensor | None = None,
         depth: torch.Tensor | None = None,
+        out_size: tuple[int, int] | None = None,
     ) -> torch.Tensor:
         x = feat_map.permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
         y = self.conv(x)
+        if out_size is not None and out_size != tuple(y.shape[-2:]):
+            y = F.interpolate(y, size=out_size, mode="bilinear", align_corners=False)
         return y.squeeze(0).permute(1, 2, 0)  # (H, W, 3)
 
 
@@ -87,6 +90,7 @@ class UNetShader(nn.Module):
         feat_map: torch.Tensor,
         alpha: torch.Tensor,
         depth: torch.Tensor,
+        out_size: tuple[int, int] | None = None,
     ) -> torch.Tensor:
         # Normalise depth to ~[0, 1] so its raw scene-unit scale doesn't swamp
         # the (already ~unit) features/alpha.
@@ -101,5 +105,9 @@ class UNetShader(nn.Module):
         d2 = self.d2(torch.cat([u2, e2], dim=1))
         u1 = F.interpolate(d2, size=e1.shape[-2:], mode="bilinear", align_corners=False)
         d1 = self.d1(torch.cat([u1, e1], dim=1))
+        # Learned upsampling: when features were splatted at reduced resolution,
+        # decode to the full output size (final conv after the interpolation).
+        if out_size is not None and out_size != tuple(d1.shape[-2:]):
+            d1 = F.interpolate(d1, size=out_size, mode="bilinear", align_corners=False)
         rgb = torch.sigmoid(self.out(d1))  # (1, 3, H, W)
         return rgb.squeeze(0).permute(1, 2, 0)  # (H, W, 3)

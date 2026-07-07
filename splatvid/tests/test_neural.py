@@ -105,6 +105,38 @@ def test_train_neural_temporal_smoke():
     assert isinstance(shader, UNetShader)
 
 
+def test_render_scale_upsamples_to_full():
+    # Splat at half resolution; the shader must return the full output size.
+    from splatvid.model import GaussianModel
+    from splatvid.render import render_features
+
+    rng = np.random.default_rng(0)
+    xyz = rng.normal(0.0, 0.4, (200, 3)).astype(np.float32)
+    xyz[:, 2] += 4.0
+    rgb = rng.uniform(0.0, 1.0, (200, 3)).astype(np.float32)
+    model = GaussianModel(xyz, rgb, feature_dim=16)
+    out, info = render_features(
+        model, UNetShader(16), torch.eye(3), torch.zeros(3),
+        200.0, 48, 36, 96, 72, render_scale=0.5,
+    )
+    assert out.shape == (72, 96, 3)
+    assert info.alpha.shape == (72, 96) and info.depth.shape == (72, 96)
+
+
+def test_train_neural_half_res_smoke():
+    # Half-res splatting + temporal loss together, end to end.
+    from splatvid.train import TrainConfig, train_neural
+
+    rec, images = _tiny_reconstruction()
+    cfg = TrainConfig(
+        iterations=2, neural_iters=3, train_size=48, feature_dim=8,
+        densify_from=100, holdout_every=2, log_every=3,
+        perceptual_weight=0.0, temporal_weight=0.5, render_scale=0.5, device="cpu",
+    )
+    model, shader = train_neural(rec, images, cfg)
+    assert isinstance(shader, UNetShader)
+
+
 def test_perceptual_loss_optional():
     # perceptual_available() must be a bool; if present, it returns a scalar.
     from splatvid.losses import perceptual_available, perceptual_loss

@@ -80,6 +80,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         device=args.device,
         feature_dim=16 if args.neural else 0,
         neural_iters=args.neural_iters,
+        render_scale=args.render_scale,
     )
     shader = None
     if args.neural:
@@ -169,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
                         "feature gaussians (experimental; see docs)")
     r.add_argument("--neural-iters", type=int, default=1500,
                    help="neural shader training iterations (with --neural)")
+    r.add_argument("--render-scale", type=float, default=1.0,
+                   help="splat features at this fraction of resolution and let "
+                        "the shader upsample (e.g. 0.5 = ~4x cheaper; with --neural)")
     r.set_defaults(fn=cmd_reconstruct)
 
     v = sub.add_parser("view", help="serve a result directory in the web viewer")

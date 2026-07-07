@@ -50,6 +50,7 @@ class TrainConfig:
     holdout_every: int = 8  # hold out every Nth view for validation
     neural_lr_shader: float = 1e-3
     neural_lr_geom: float = 1e-4
+    render_scale: float = 1.0  # <1 splats at reduced res; shader upsamples
 
 
 @dataclass
@@ -240,7 +241,8 @@ def _temporal_term(model, shader, view, pred_a, info_a, vi, train_views, nn_idx,
         Rb, tb = _perturb_cam(view, cfg.temporal_perturb, rng)
         fb, cxb, cyb, wb, hb = view.focal, view.cx, view.cy, view.width, view.height
     pred_b, _ = render_features(
-        model, shader, Rb, tb, fb, cxb, cyb, wb, hb, bg=bg, max_per_tile=cfg.max_per_tile
+        model, shader, Rb, tb, fb, cxb, cyb, wb, hb, bg=bg,
+        max_per_tile=cfg.max_per_tile, render_scale=cfg.render_scale,
     )
     cam_a = (view.R, view.t, view.focal, view.cx, view.cy)
     cam_b = (Rb, tb, fb, cxb, cyb)
@@ -301,6 +303,7 @@ def train_neural(
         pred, info_a = render_features(
             model, shader, view.R, view.t, view.focal, view.cx, view.cy,
             view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
+            render_scale=cfg.render_scale,
         )
         loss = neural_image_loss(
             pred, view.image, cfg.ssim_weight, cfg.perceptual_weight
@@ -320,7 +323,7 @@ def train_neural(
             log.info("[neural] unfroze geometry at iter %d", it)
 
         if it % cfg.log_every == 0 or it == cfg.neural_iters:
-            vp = _neural_val_psnr(model, shader, val_views, bg)
+            vp = _neural_val_psnr(model, shader, val_views, bg, cfg.render_scale)
             log.info(
                 "[neural] iter %d/%d  loss %.4f  val_psnr %.2f dB",
                 it, cfg.neural_iters, float(loss.detach()), vp,
@@ -331,14 +334,15 @@ def train_neural(
     return model, shader
 
 
-def _neural_val_psnr(model, shader, val_views, bg) -> float:
+def _neural_val_psnr(model, shader, val_views, bg, render_scale=1.0) -> float:
     if not val_views:
         return float("nan")
     with torch.no_grad():
         vals = []
         for v in val_views:
             pred, _ = render_features(
-                model, shader, v.R, v.t, v.focal, v.cx, v.cy, v.width, v.height, bg=bg
+                model, shader, v.R, v.t, v.focal, v.cx, v.cy, v.width, v.height,
+                bg=bg, render_scale=render_scale,
             )
             vals.append(psnr(pred, v.image))
     return float(np.mean(vals))
