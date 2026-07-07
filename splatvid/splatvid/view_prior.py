@@ -18,9 +18,14 @@ import torch
 
 
 class ViewPrior:
-    """Map a rendered view (H, W, 3) in [0, 1] to a plausible target image."""
+    """Map a rendered view (H, W, 3) in [0, 1] to a plausible target image.
 
-    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+    ``cam=(R, t, focal, cx, cy)`` is the pseudo-view camera; priors that render
+    an independent scene (e.g. a mesh) use it, priors that clean the render
+    ignore it.
+    """
+
+    def __call__(self, image: torch.Tensor, cam=None) -> torch.Tensor:
         raise NotImplementedError
 
 
@@ -32,5 +37,36 @@ class NoopViewPrior(ViewPrior):
     generative prior is plugged in.
     """
 
-    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+    def __call__(self, image: torch.Tensor, cam=None) -> torch.Tensor:
         return image.detach()
+
+
+class MeshViewPrior(ViewPrior):
+    """Render a colored mesh from the pseudo-view camera as the target.
+
+    Turns the metric mesh into a source of synthetic novel views: for a camera
+    the video never filmed, the mesh render is a plausible target the splat is
+    pulled toward — adding coverage of unobserved angles (the mesh's numpy
+    rasterizer is CPU-only, so this trades speed for a dependency-free target).
+    """
+
+    def __init__(self, mesh, focal, cx, cy, width, height):
+        self.mesh = mesh
+        self.focal, self.cx, self.cy = float(focal), float(cx), float(cy)
+        self.width, self.height = int(width), int(height)
+
+    def render(self, R, t, device=None, dtype=torch.float32) -> torch.Tensor:
+        """Render the mesh from camera (R, t) → (H, W, 3) target tensor."""
+        from .mesh import render_mesh
+
+        Rn = R.detach().cpu().numpy() if torch.is_tensor(R) else R
+        tn = t.detach().cpu().numpy() if torch.is_tensor(t) else t
+        color, _ = render_mesh(
+            self.mesh, Rn, tn, self.focal, self.cx, self.cy, self.width, self.height
+        )
+        return torch.as_tensor(color, dtype=dtype, device=device)
+
+    def __call__(self, image: torch.Tensor, cam=None) -> torch.Tensor:
+        if cam is None:
+            return image.detach()
+        return self.render(cam[0], cam[1], device=image.device, dtype=image.dtype)

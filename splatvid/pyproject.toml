@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 neural = ["torchvision>=0.15"]  # VGG perceptual loss for --neural
+mesh = ["open3d>=0.17"]  # TSDF fusion + mesh I/O for --mesh
 
 [project.scripts]
 splatvid = "splatvid.cli:main"

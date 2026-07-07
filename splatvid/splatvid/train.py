@@ -54,6 +54,8 @@ class TrainConfig:
     render_scale: float = 1.0  # <1 splats at reduced res; shader upsamples
     pseudo_weight: float = 0.0  # generative pseudo-view supervision (M4; needs a prior)
     pseudo_perturb: float = 0.12  # rad, novel-camera offset for pseudo-views
+    pseudo_per_view: int = 2  # precomputed mesh novel-view targets per train view
+    depth_weight: float = 0.0  # mesh depth supervision on the geometry stage
 
 
 @dataclass
@@ -134,6 +136,7 @@ def train(
     images: list[np.ndarray],
     cfg: TrainConfig | None = None,
     progress_cb=None,
+    mesh=None,
 ) -> GaussianModel:
     cfg = cfg or TrainConfig()
     torch.manual_seed(cfg.seed)
@@ -148,14 +151,36 @@ def train(
     densify_until = int(cfg.densify_until_frac * cfg.iterations)
     bg = torch.zeros(3, device=cfg.device)
 
+    # Mesh depth supervision (grounds geometry / kills floaters): render the
+    # mesh's depth at each view once, up front — it doesn't change as the
+    # gaussians optimise.
+    mesh_depths = None
+    if mesh is not None and cfg.depth_weight > 0:
+        from .mesh import render_mesh
+        mesh_depths = []
+        for v in views:
+            _, md = render_mesh(
+                mesh, v.R.detach().cpu().numpy(), v.t.detach().cpu().numpy(),
+                v.focal, v.cx, v.cy, v.width, v.height,
+            )
+            mesh_depths.append(torch.as_tensor(md, dtype=torch.float32, device=cfg.device))
+        log.info("Depth supervision: mesh depth for %d views", len(views))
+
     recent_psnr: list[float] = []
     for it in range(1, cfg.iterations + 1):
-        view = views[int(rng.integers(len(views)))]
+        vi = int(rng.integers(len(views)))
+        view = views[vi]
         pred, info = render_model(
             model, view.R, view.t, view.focal, view.cx, view.cy,
             view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
+            return_aux=(mesh_depths is not None),
         )
         loss = image_loss(pred, view.image, cfg.ssim_weight)
+        if mesh_depths is not None:
+            md = mesh_depths[vi]
+            valid = md > 0
+            if bool(valid.any()):
+                loss = loss + cfg.depth_weight * (info.depth[valid] - md[valid]).abs().mean()
         opt.zero_grad(set_to_none=True)
         loss.backward()
 
@@ -260,8 +285,20 @@ def _pseudo_term(model, shader, view, prior, bg, cfg, rng):
         model, shader, Rb, tb, view.focal, view.cx, view.cy, view.width, view.height,
         bg=bg, max_per_tile=cfg.max_per_tile, render_scale=cfg.render_scale,
     )
-    target = prior(pred_b.detach())
+    cam = (Rb, tb, view.focal, view.cx, view.cy)
+    target = prior(pred_b.detach(), cam=cam)
     return (pred_b - target).abs().mean()
+
+
+def _pseudo_term_banked(model, shader, bank, bg, cfg, rng):
+    """Pseudo-view loss against a precomputed mesh target (no per-iter mesh render)."""
+    R, t, focal, cx, cy, target = bank[int(rng.integers(len(bank)))]
+    h, w = target.shape[0], target.shape[1]
+    pred, _ = render_features(
+        model, shader, R, t, focal, cx, cy, w, h, bg=bg,
+        max_per_tile=cfg.max_per_tile, render_scale=cfg.render_scale,
+    )
+    return (pred - target).abs().mean()
 
 
 def train_neural(
@@ -270,6 +307,7 @@ def train_neural(
     cfg: TrainConfig | None = None,
     progress_cb=None,
     view_prior=None,
+    mesh=None,
 ) -> tuple[GaussianModel, UNetShader]:
     """Two-stage neural render: geometry (direct colour) then a U-Net shader.
 
@@ -285,7 +323,7 @@ def train_neural(
         cfg = replace(cfg, feature_dim=16)
 
     log.info("[neural] stage 1/2: geometry (%d iters)", cfg.iterations)
-    model = train(rec, images, cfg, progress_cb)
+    model = train(rec, images, cfg, progress_cb, mesh=mesh)
 
     dev = cfg.device
     shader = UNetShader(cfg.feature_dim).to(dev)
@@ -309,6 +347,18 @@ def train_neural(
     centers = np.stack([_cam_center(v) for v in train_views]) if train_views else np.zeros((0, 3))
     nn_idx = _nearest_neighbours(centers)
     prior = view_prior if view_prior is not None else NoopViewPrior()
+
+    # Precompute mesh novel-view targets once, so the (slow) numpy mesh render
+    # doesn't run every pseudo-view iteration — the loop just resamples the bank.
+    pseudo_bank = None
+    if cfg.pseudo_weight > 0 and hasattr(prior, "render"):
+        pseudo_bank = []
+        for v in train_views:
+            for _ in range(max(1, cfg.pseudo_per_view)):
+                Rb, tb = _perturb_cam(v, cfg.pseudo_perturb, rng)
+                tgt = prior.render(Rb, tb, device=dev)
+                pseudo_bank.append((Rb, tb, v.focal, v.cx, v.cy, tgt))
+        log.info("[neural] precomputed %d mesh pseudo-view targets", len(pseudo_bank))
     log.info(
         "[neural] stage 2/2: shader (%d iters, %d train / %d val views)",
         cfg.neural_iters, len(train_views), len(val_views),
@@ -330,9 +380,14 @@ def train_neural(
                 model, shader, view, pred, info_a, vi, train_views, nn_idx, bg, cfg, rng
             )
         if cfg.pseudo_weight > 0:
-            loss = loss + cfg.pseudo_weight * _pseudo_term(
-                model, shader, view, prior, bg, cfg, rng
-            )
+            if pseudo_bank is not None:
+                loss = loss + cfg.pseudo_weight * _pseudo_term_banked(
+                    model, shader, pseudo_bank, bg, cfg, rng
+                )
+            else:
+                loss = loss + cfg.pseudo_weight * _pseudo_term(
+                    model, shader, view, prior, bg, cfg, rng
+                )
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
