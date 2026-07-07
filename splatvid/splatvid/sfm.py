@@ -14,7 +14,16 @@ import cv2
 import numpy as np
 
 from .ba import bundle_adjust
-from .features import FrameFeatures, PairMatch, Track, build_tracks, detect_features, match_frames
+from .features import (
+    FrameFeatures,
+    PairMatch,
+    Track,
+    _match_pair,
+    _verify_pair,
+    build_tracks,
+    detect_features,
+    match_frames,
+)
 from .geometry import (
     camera_center,
     make_K,
@@ -343,21 +352,22 @@ def _filter_points(
     return len(drop)
 
 
-def _largest_component(n_frames: int, pair_matches: list[PairMatch]) -> set[int]:
-    """Largest connected set of frames in the view graph.
+def _connected_components(
+    n_frames: int, pair_matches: list[PairMatch]
+) -> list[set[int]]:
+    """Connected components of the view graph, largest first.
 
     Real handheld video often breaks into segments with little overlap
     (fast motion, blur, or the camera looking at unrelated things), which
     leaves the pairwise-match graph fragmented. Incremental SfM can only
-    grow one connected component, so we run it on the biggest one rather
-    than letting the seed pair decide which island gets reconstructed.
+    grow one connected component at a time.
     """
     adj: dict[int, set[int]] = {i: set() for i in range(n_frames)}
     for pm in pair_matches:
         adj[pm.i].add(pm.j)
         adj[pm.j].add(pm.i)
     seen: set[int] = set()
-    best: set[int] = set()
+    comps: list[set[int]] = []
     for start in range(n_frames):
         if start in seen:
             continue
@@ -370,9 +380,56 @@ def _largest_component(n_frames: int, pair_matches: list[PairMatch]) -> set[int]
             seen.add(x)
             comp.add(x)
             stack.extend(adj[x] - seen)
-        if len(comp) > len(best):
-            best = comp
-    return best
+        comps.append(comp)
+    comps.sort(key=len, reverse=True)
+    return comps
+
+
+def _largest_component(n_frames: int, pair_matches: list[PairMatch]) -> set[int]:
+    comps = _connected_components(n_frames, pair_matches)
+    return comps[0] if comps else set()
+
+
+def _bridge_components(
+    features: list[FrameFeatures],
+    components: list[set[int]],
+    existing: set[tuple[int, int]],
+    sample: int = 8,
+    min_matches: int = 30,
+) -> list[PairMatch]:
+    """Try to connect separate components with extra cross-component matches.
+
+    The default matcher only compares frames in a small temporal window plus
+    a sparse loop-closure grid, so two segments that *do* overlap in the
+    scene can still land in different components if the overlap fell between
+    sampled pairs. Here we match a spread of frames from every smaller
+    component against a spread from the largest one; any verified pair merges
+    them. Truly non-overlapping segments simply find no matches (correct).
+    Bounded to ``sample^2`` matches per component so it stays cheap.
+    """
+    if len(components) < 2:
+        return []
+
+    def spread(comp: set[int]) -> list[int]:
+        s = sorted(comp)
+        if len(s) <= sample:
+            return s
+        idx = np.linspace(0, len(s) - 1, sample).astype(int)
+        return [s[k] for k in sorted(set(idx))]
+
+    main = spread(components[0])
+    new_pairs: list[PairMatch] = []
+    for comp in components[1:]:
+        for a in spread(comp):
+            for b in main:
+                lo, hi = (a, b) if a < b else (b, a)
+                if (lo, hi) in existing:
+                    continue
+                m = _match_pair(features[lo], features[hi])
+                m = _verify_pair(features[lo], features[hi], m)
+                if len(m) >= min_matches:
+                    new_pairs.append(PairMatch(i=lo, j=hi, matches=m))
+    return new_pairs
 
 
 def _run_ba(
@@ -420,6 +477,21 @@ def run_sfm(
     pair_matches = match_frames(features, window=match_window)
     if not pair_matches:
         raise SfMError("No verifiable frame pairs found; is the video textured and moving?")
+
+    # Try to merge fragmented segments before committing to a component:
+    # match extra cross-component pairs the windowed/loop matcher skipped.
+    comps = _connected_components(len(images), pair_matches)
+    if len(comps) > 1:
+        existing = {(pm.i, pm.j) for pm in pair_matches}
+        bridges = _bridge_components(features, comps, existing)
+        if bridges:
+            pair_matches = pair_matches + bridges
+            merged = len(comps) - len(_connected_components(len(images), pair_matches))
+            log.info(
+                "Bridged fragmented view graph: +%d pairs, %d fewer components",
+                len(bridges), merged,
+            )
+
     tracks = build_tracks(features, pair_matches, min_length=min_track_len)
     if len(tracks) < 100:
         raise SfMError(f"Only {len(tracks)} feature tracks; not enough to reconstruct.")
