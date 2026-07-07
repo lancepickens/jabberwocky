@@ -10,11 +10,12 @@ below maps to code you can read.
 
 | Doc | Covers | Code |
 |---|---|---|
-| [pipeline-overview.md](pipeline-overview.md) | The big picture: why each stage exists, data flow, coordinate conventions | `cli.py` |
+| [pipeline-overview.md](pipeline-overview.md) | The big picture: why each stage exists, data flow, coordinate conventions, module structure & dependency graph | `cli.py` |
 | [structure-from-motion.md](structure-from-motion.md) | Frames → camera poses + sparse point cloud: features, epipolar geometry, PnP, triangulation, bundle adjustment | `video.py`, `features.py`, `sfm.py`, `ba.py`, `geometry.py` |
 | [gaussian-splatting.md](gaussian-splatting.md) | Point cloud → photorealistic model: the 3D gaussian representation, EWA projection, the differentiable tile rasterizer, training, densification | `model.py`, `render.py`, `losses.py`, `train.py` |
 | [formats-and-viewer.md](formats-and-viewer.md) | Byte-level `.ply` / `.splat` layouts and how the bundled WebGL2 viewer works | `export.py`, `viewer.html` |
 | [performance-and-roadmap.md](performance-and-roadmap.md) | Apple Silicon (MPS) usage, benchmarking, where the time goes, and the improvement roadmap | `cli.py`, `render.py`, `scripts/bench_render.py` |
+| [testing.md](testing.md) | How the test suite validates each layer of the architecture, and how to run it | `tests/`, `synthetic.py` |
 
 **[explainer.html](explainer.html)** is a self-contained illustrated
 explainer of the whole pipeline — open it directly in a browser (no server,

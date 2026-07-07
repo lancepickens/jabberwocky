@@ -85,6 +85,61 @@ an unknown global scale factor, which is irrelevant for viewing.
 - Stage 4: `scene.ply` (interchange), `scene.splat` + `index.html`
   (bundled viewer), optional `turntable.mp4` (rendered orbit).
 
+## Module structure
+
+The package is deliberately layered: a set of dependency-free **foundation**
+modules (each a self-contained algorithm with no intra-package imports), a
+thin layer of **stage orchestrators** that compose them, and `cli.py` on top
+wiring the four stages together. Nothing imports "sideways" within a layer,
+so any foundation module can be read, tested, or reused in isolation.
+
+| Module | Layer | Responsibility | Imports (intra-package) |
+|---|---|---|---|
+| `geometry.py` | foundation | NumPy rotation / projection / DLT-triangulation primitives; the authoritative coordinate conventions | — |
+| `features.py` | foundation | SIFT detection, ratio+cross-check matching, epipolar verification, union-find tracks | — |
+| `video.py` | foundation | frame extraction + sharpness selection | — |
+| `render.py` | foundation | pure-PyTorch differentiable EWA rasterizer | — |
+| `model.py` | foundation | `GaussianModel`: parameters, activations, densify/prune | — |
+| `losses.py` | foundation | L1 + differentiable SSIM + PSNR | — |
+| `ba.py` | stage | sparse bundle adjustment (SciPy least-squares) | `geometry` |
+| `sfm.py` | stage | incremental SfM driver (init → PnP → triangulate → BA) | `features`, `geometry`, `ba` |
+| `train.py` | stage | optimization loop, learning-rate schedule, turntable render | `model`, `render`, `losses`, `sfm` |
+| `export.py` | stage | `.ply` / `.splat` writers and `.splat` reader | `model` |
+| `synthetic.py` | test/demo | procedural scene + orbit-video generator (known ground truth) | `render` |
+| `cli.py` | top | argument parsing, device selection, 4-stage orchestration | `video`, `sfm`, `train`, `export` |
+| `viewer.html` | top | standalone WebGL2 splat viewer | — (no Python) |
+
+Dependency graph (an arrow means "imports"):
+
+```
+cli.py
+├─ video.py            (foundation, leaf)
+├─ sfm.py ─── features.py            (foundation, leaf)
+│         └── ba.py ──┐
+│         └── geometry.py ◄┘         (foundation, leaf)
+├─ train.py ── sfm.py (above)
+│           ├─ model.py              (foundation, leaf)
+│           ├─ render.py             (foundation, leaf)
+│           └─ losses.py             (foundation, leaf)
+└─ export.py ── model.py
+
+synthetic.py ── render.py            (test/demo only)
+viewer.html                          (standalone, no imports)
+```
+
+Two facts this structure encodes:
+
+- **`geometry.py` is the shared foundation of the SfM half**; the splatting
+  half rests instead on `render.py` + `model.py` + `losses.py`. The two
+  halves meet only inside `train.py`, which reads an `sfm.Reconstruction`
+  and seeds a `model.GaussianModel` from it.
+- **Quaternion→matrix math exists twice on purpose.** `geometry.py` has a
+  NumPy version used by the CPU-side SfM/BA; `render.py` has an
+  autograd-friendly `quat_to_rotmat_torch` used by the differentiable
+  renderer (and mirrored again in GLSL inside `viewer.html`). They implement
+  the same `(w, x, y, z)` convention; the three tests in `test_geometry.py`
+  and `test_render.py` pin them to it.
+
 ## Where the time goes
 
 On CPU, roughly: SIFT matching and the rasterizer dominate. Matching is

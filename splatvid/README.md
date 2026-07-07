@@ -94,7 +94,7 @@ Extensive documentation lives in [`docs/`](docs/README.md):
   explainer of the whole pipeline (open directly in a browser; includes an
   interactive alpha-compositing demo).
 - [`docs/pipeline-overview.md`](docs/pipeline-overview.md) — architecture,
-  data flow, and coordinate conventions.
+  data flow, coordinate conventions, and the module dependency graph.
 - [`docs/structure-from-motion.md`](docs/structure-from-motion.md) — features,
   epipolar geometry, PnP, triangulation, and bundle adjustment in depth.
 - [`docs/gaussian-splatting.md`](docs/gaussian-splatting.md) — the gaussian
@@ -104,6 +104,8 @@ Extensive documentation lives in [`docs/`](docs/README.md):
   `.ply`/`.splat` layouts and how the WebGL viewer works.
 - [`docs/performance-and-roadmap.md`](docs/performance-and-roadmap.md) —
   Apple Silicon / device selection, benchmarking, and planned improvements.
+- [`docs/testing.md`](docs/testing.md) — how the test suite validates each
+  layer of the architecture, and how to run it.
 
 ## Tests
 
