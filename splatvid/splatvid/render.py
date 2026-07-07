@@ -169,7 +169,9 @@ def render(
     g_rgb = rgb[sel]
     g_op = opacity[sel, 0]
     g_rad = radii[sel].detach()
-    g_depth = depth[sel].detach() if return_aux else None
+    # Keep depth differentiable (grad flows to xyz) so it can be supervised
+    # against a mesh; only computed when return_aux.
+    g_depth = depth[sel] if return_aux else None
 
     n_tx = (width + TILE - 1) // TILE
     n_ty = (height + TILE - 1) // TILE

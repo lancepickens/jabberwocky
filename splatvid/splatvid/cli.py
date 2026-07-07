@@ -81,13 +81,32 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         feature_dim=16 if args.neural else 0,
         neural_iters=args.neural_iters,
         render_scale=args.render_scale,
+        depth_weight=0.5 if args.mesh_supervision else 0.0,
+        pseudo_weight=0.5 if args.mesh_supervision else 0.0,
     )
+
+    mesh_data, prior = None, None
+    if args.mesh_supervision:
+        from .mesh import load_mesh
+        from .view_prior import MeshViewPrior
+
+        mesh_path = args.mesh_path or os.path.join(args.output, "mesh.ply")
+        mesh_data = load_mesh(mesh_path)
+        log.info("Mesh supervision from %s (%d verts)", mesh_path, len(mesh_data.verts))
+        s = min(1.0, args.train_size / max(rec.width, rec.height))
+        prior = MeshViewPrior(
+            mesh_data, rec.focal * s, rec.cx * s, rec.cy * s,
+            round(rec.width * s), round(rec.height * s),
+        )
+
     shader = None
     if args.neural:
         import torch
 
         from .train import train_neural
-        model, shader = train_neural(rec, frames.images, cfg)
+        model, shader = train_neural(
+            rec, frames.images, cfg, view_prior=prior, mesh=mesh_data
+        )
         # Persist everything needed to reproduce the neural render later
         # (features are not in scene.ply, which stores only geometry+colour).
         torch.save(
@@ -231,6 +250,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--mesh-voxel", type=float, default=None,
                    help="TSDF voxel length override in reconstruction units "
                         "(default: scene_extent/256)")
+    r.add_argument("--mesh-supervision", action="store_true",
+                   help="use a mesh to supervise --neural training: depth loss "
+                        "grounds geometry + mesh-rendered novel views (needs --mesh-path)")
+    r.add_argument("--mesh-path", default=None,
+                   help="prebuilt mesh.ply for --mesh-supervision "
+                        "(default: <output>/mesh.ply)")
     r.add_argument("--scale-factor", type=float, default=None,
                    help="metres per reconstruction unit (bypasses measurement)")
     r.add_argument("--scale-frame", type=int, default=None,
