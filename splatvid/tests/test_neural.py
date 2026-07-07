@@ -44,22 +44,65 @@ def _tiny_reconstruction(n_cam=3, n_pts=300, w=64, h=48, seed=0):
     return rec, images
 
 
+def test_temporal_warp_identity_is_zero():
+    from splatvid.losses import temporal_warp_loss
+
+    torch.manual_seed(0)
+    h, w = 24, 32
+    img = torch.rand(h, w, 3)
+    depth = torch.full((h, w), 3.0)
+    cam = (torch.eye(3), torch.zeros(3), 40.0, w / 2, h / 2)
+    # Same image + same camera: the warp is the identity, so loss ~ 0.
+    loss0 = temporal_warp_loss(img, depth, cam, img, cam)
+    assert float(loss0) < 1e-4
+    # A different image at the same camera is penalised.
+    loss1 = temporal_warp_loss(img, depth, cam, torch.rand(h, w, 3), cam)
+    assert float(loss1) > 1e-2
+
+
+def test_temporal_warp_gradients():
+    from splatvid.losses import temporal_warp_loss
+
+    h, w = 24, 32
+    a = torch.rand(h, w, 3, requires_grad=True)
+    b = torch.rand(h, w, 3, requires_grad=True)
+    depth = torch.full((h, w), 3.0)
+    cam = (torch.eye(3), torch.zeros(3), 40.0, w / 2, h / 2)
+    temporal_warp_loss(a, depth, cam, b, cam).backward()
+    assert a.grad is not None and torch.isfinite(a.grad).all()
+    assert b.grad is not None and torch.isfinite(b.grad).all()
+
+
 def test_train_neural_smoke():
     # End-to-end plumbing of the two-stage neural loop on a tiny scene.
-    # perceptual_weight=0 so no torchvision is needed.
+    # perceptual/temporal off so this isolates the M1 path (no torchvision).
     from splatvid.train import TrainConfig, train_neural
 
     rec, images = _tiny_reconstruction()
     cfg = TrainConfig(
         iterations=3, neural_iters=4, train_size=48, feature_dim=8,
         densify_from=100, holdout_every=2, log_every=2,
-        perceptual_weight=0.0, device="cpu",
+        perceptual_weight=0.0, temporal_weight=0.0, device="cpu",
     )
     model, shader = train_neural(rec, images, cfg)
     assert model.get_feature() is not None
     assert model.get_feature().shape[1] == 8
     assert isinstance(shader, UNetShader)
     assert model.num_gaussians > 0
+
+
+def test_train_neural_temporal_smoke():
+    # The two-stage loop runs with the temporal (anti-popping) loss enabled.
+    from splatvid.train import TrainConfig, train_neural
+
+    rec, images = _tiny_reconstruction()
+    cfg = TrainConfig(
+        iterations=2, neural_iters=4, train_size=48, feature_dim=8,
+        densify_from=100, holdout_every=2, log_every=4,
+        perceptual_weight=0.0, temporal_weight=0.5, device="cpu",
+    )
+    model, shader = train_neural(rec, images, cfg)
+    assert isinstance(shader, UNetShader)
 
 
 def test_perceptual_loss_optional():

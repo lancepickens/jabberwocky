@@ -101,6 +101,58 @@ def perceptual_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return (vgg(prep(pred)) - vgg(prep(target))).abs().mean()
 
 
+def temporal_warp_loss(
+    img_a: torch.Tensor,
+    depth_a: torch.Tensor,
+    cam_a: tuple,
+    img_b: torch.Tensor,
+    cam_b: tuple,
+    near: float = 0.05,
+) -> torch.Tensor:
+    """View-consistency loss between two nearby renders — the anti-popping term.
+
+    Back-projects view ``a``'s pixels with its rendered depth, reprojects them
+    into view ``b``, samples ``img_b`` there, and penalises disagreement with
+    ``img_a`` over the co-visible region. A shader that flickers/pops as the
+    camera moves cannot satisfy this, so minimising it forces view coherence.
+    Each ``cam`` is ``(R, t, focal, cx, cy)`` (world-to-camera).
+    """
+    Ra, ta, fa, cxa, cya = cam_a
+    Rb, tb, fb, cxb, cyb = cam_b
+    h, w = depth_a.shape
+    dev = img_a.device
+    ys, xs = torch.meshgrid(
+        torch.arange(h, device=dev, dtype=torch.float32),
+        torch.arange(w, device=dev, dtype=torch.float32),
+        indexing="ij",
+    )
+    px, py, z = xs + 0.5, ys + 0.5, depth_a
+    # Pixel -> camera-a 3D (z is camera-space depth) -> world.
+    xa = torch.stack([(px - cxa) / fa * z, (py - cya) / fa * z, z], dim=-1)
+    xw = (xa - ta) @ Ra  # row-vector form of R_a^T (x - t)
+    # World -> camera b -> pixel.
+    xb = xw @ Rb.T + tb
+    zb = xb[..., 2]
+    ub = fb * xb[..., 0] / zb.clamp(min=1e-6) + cxb
+    vb = fb * xb[..., 1] / zb.clamp(min=1e-6) + cyb
+    valid = (
+        (z > near) & (zb > near)
+        & (ub >= 0) & (ub <= w) & (vb >= 0) & (vb <= h)
+    )
+    # Pixel centres live at i + 0.5, so normalise by the full extent and use
+    # align_corners=False; an identity reprojection then samples exactly.
+    gx = 2 * ub / w - 1
+    gy = 2 * vb / h - 1
+    grid = torch.stack([gx, gy], dim=-1)[None]  # (1, H, W, 2)
+    imb = img_b.permute(2, 0, 1)[None]  # (1, 3, H, W)
+    warped = torch.nn.functional.grid_sample(
+        imb, grid, align_corners=False, padding_mode="border"
+    )[0].permute(1, 2, 0)
+    diff = (warped - img_a).abs().mean(dim=-1)
+    m = valid.float()
+    return (diff * m).sum() / (m.sum() + 1e-6)
+
+
 def neural_image_loss(
     pred: torch.Tensor,
     target: torch.Tensor,

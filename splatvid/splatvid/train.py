@@ -11,7 +11,8 @@ import cv2
 import numpy as np
 import torch
 
-from .losses import image_loss, neural_image_loss, psnr
+from .geometry import rodrigues_to_rotmat
+from .losses import image_loss, neural_image_loss, psnr, temporal_warp_loss
 from .model import GaussianModel
 from .render import render_features, render_model
 from .sfm import Reconstruction
@@ -44,6 +45,8 @@ class TrainConfig:
     neural_iters: int = 1500
     neural_unfreeze_frac: float = 0.7  # unfreeze geometry at this fraction
     perceptual_weight: float = 0.5
+    temporal_weight: float = 0.5  # anti-popping view-consistency loss
+    temporal_perturb: float = 0.04  # rad, synthesized nearby-camera rotation
     holdout_every: int = 8  # hold out every Nth view for validation
     neural_lr_shader: float = 1e-3
     neural_lr_geom: float = 1e-4
@@ -197,6 +200,53 @@ def train(
 _GEOM_PARAMS = ("xyz", "log_scale", "quat", "color", "opacity")
 
 
+def _cam_center(view: TrainView) -> np.ndarray:
+    R = view.R.detach().cpu().numpy()
+    t = view.t.detach().cpu().numpy()
+    return -R.T @ t
+
+
+def _nearest_neighbours(centers: np.ndarray) -> list[int | None]:
+    n = len(centers)
+    if n < 2:
+        return [None] * n
+    out: list[int | None] = []
+    for i in range(n):
+        d = np.linalg.norm(centers - centers[i], axis=1)
+        d[i] = np.inf
+        out.append(int(np.argmin(d)))
+    return out
+
+
+def _perturb_cam(view: TrainView, mag: float, rng) -> tuple[torch.Tensor, torch.Tensor]:
+    """A synthesized nearby camera: small random rotation about the same centre."""
+    dev = view.R.device
+    axis = rng.normal(size=3)
+    axis = axis / (np.linalg.norm(axis) + 1e-9)
+    dR = torch.tensor(rodrigues_to_rotmat(axis * mag), dtype=torch.float32, device=dev)
+    Rb = dR @ view.R
+    center = -(view.R.T @ view.t)  # camera centre stays put
+    tb = -(Rb @ center)
+    return Rb, tb
+
+
+def _temporal_term(model, shader, view, pred_a, info_a, vi, train_views, nn_idx, bg, cfg, rng):
+    """Anti-popping loss vs. a real neighbour view (50%) or a synthesized one."""
+    use_real = len(train_views) >= 2 and nn_idx[vi] is not None and rng.random() < 0.5
+    if use_real:
+        vb = train_views[nn_idx[vi]]
+        Rb, tb, fb, cxb, cyb, wb, hb = vb.R, vb.t, vb.focal, vb.cx, vb.cy, vb.width, vb.height
+    else:
+        Rb, tb = _perturb_cam(view, cfg.temporal_perturb, rng)
+        fb, cxb, cyb, wb, hb = view.focal, view.cx, view.cy, view.width, view.height
+    pred_b, _ = render_features(
+        model, shader, Rb, tb, fb, cxb, cyb, wb, hb, bg=bg, max_per_tile=cfg.max_per_tile
+    )
+    cam_a = (view.R, view.t, view.focal, view.cx, view.cy)
+    cam_b = (Rb, tb, fb, cxb, cyb)
+    return temporal_warp_loss(pred_a, info_a.depth, cam_a, pred_b, cam_b)
+
+
 def train_neural(
     rec: Reconstruction,
     images: list[np.ndarray],
@@ -236,20 +286,29 @@ def train_neural(
         list(shader.parameters()) + [model.feature], lr=cfg.neural_lr_shader
     )
     unfreeze_at = int(cfg.neural_unfreeze_frac * cfg.neural_iters)
+
+    # Nearest-neighbour train view (by camera centre) for the real temporal pair.
+    centers = np.stack([_cam_center(v) for v in train_views]) if train_views else np.zeros((0, 3))
+    nn_idx = _nearest_neighbours(centers)
     log.info(
         "[neural] stage 2/2: shader (%d iters, %d train / %d val views)",
         cfg.neural_iters, len(train_views), len(val_views),
     )
 
     for it in range(1, cfg.neural_iters + 1):
-        view = train_views[int(rng.integers(len(train_views)))]
-        pred, _ = render_features(
+        vi = int(rng.integers(len(train_views)))
+        view = train_views[vi]
+        pred, info_a = render_features(
             model, shader, view.R, view.t, view.focal, view.cx, view.cy,
             view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
         )
         loss = neural_image_loss(
             pred, view.image, cfg.ssim_weight, cfg.perceptual_weight
         )
+        if cfg.temporal_weight > 0:
+            loss = loss + cfg.temporal_weight * _temporal_term(
+                model, shader, view, pred, info_a, vi, train_views, nn_idx, bg, cfg, rng
+            )
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
