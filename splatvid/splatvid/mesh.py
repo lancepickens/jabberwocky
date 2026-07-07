@@ -181,6 +181,36 @@ def save_mesh(mesh, path: str) -> None:
     _import_o3d().io.write_triangle_mesh(path, mesh)
 
 
+def save_mesh_draco(mesh, path: str, *, quantization_bits: int = 11, level: int = 7) -> int:
+    """Write a Draco-compressed mesh (``.drc``) for fast web transport.
+
+    Draco quantizes positions to ``quantization_bits`` and entropy-codes the
+    connectivity + colours — ~15-18x smaller than binary PLY, visually lossless
+    at 11 bits for scene-scale meshes. Decodes in the browser with three.js
+    DRACOLoader (or wrap in glTF via KHR_draco_mesh_compression). Returns the
+    byte size. Accepts an Open3D mesh or a numpy ``MeshData``.
+    """
+    import DracoPy  # noqa: PLC0415
+
+    if hasattr(mesh, "vertices"):  # Open3D TriangleMesh
+        v = np.asarray(mesh.vertices)
+        f = np.asarray(mesh.triangles).astype(np.uint32)
+        c = np.asarray(mesh.vertex_colors)
+    else:  # MeshData
+        v, f, c = mesh.verts, mesh.faces.astype(np.uint32), mesh.vert_colors
+    col = (
+        (np.clip(c, 0, 1) * 255).astype(np.uint8)
+        if c is not None and len(c) == len(v) else None
+    )
+    enc = DracoPy.encode(
+        v, faces=f, colors=col,
+        quantization_bits=quantization_bits, compression_level=level,
+    )
+    with open(path, "wb") as fh:
+        fh.write(enc)
+    return len(enc)
+
+
 def load_mesh(path: str) -> MeshData:
     """Read a mesh file into a numpy ``MeshData``."""
     return mesh_to_data(_import_o3d().io.read_triangle_mesh(path))

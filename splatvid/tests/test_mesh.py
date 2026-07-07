@@ -107,6 +107,23 @@ def test_fuse_from_depth_maps():
     assert len(mesh.triangles) > 50
 
 
+def test_save_mesh_draco(tmp_path):
+    import os
+
+    dracopy = pytest.importorskip("DracoPy")
+    from splatvid.mesh import MeshData, save_mesh_draco
+
+    rng = np.random.default_rng(0)
+    v = rng.uniform(0, 1, (120, 3))
+    f = np.array([[i, (i + 1) % 120, (i + 2) % 120] for i in range(80)])
+    md = MeshData(v, f, np.ones((120, 3)))
+    p = str(tmp_path / "m.drc")
+    n = save_mesh_draco(md, p)
+    assert n > 0 and os.path.getsize(p) == n
+    dec = dracopy.decode(open(p, "rb").read())  # round-trips
+    assert len(dec.points) > 0 and len(dec.faces) > 0
+
+
 def test_mesh_view_prior():
     from splatvid.view_prior import MeshViewPrior, NoopViewPrior
 

@@ -182,6 +182,15 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
             "Wrote %s (%d verts, %d tris)",
             mesh_path, len(mesh.vertices), len(mesh.triangles),
         )
+        # Also emit a Draco-compressed mesh.drc for web transport (~15x smaller).
+        try:
+            from .mesh import save_mesh_draco
+
+            drc = os.path.join(args.output, "mesh.drc")
+            nbytes = save_mesh_draco(mesh, drc)
+            log.info("Wrote %s (%.2f MB, Draco)", drc, nbytes / 1e6)
+        except ImportError:
+            log.info("Skipping mesh.drc (install DracoPy for compressed export)")
         if scale:
             metric = copy.deepcopy(mesh)
             metric.scale(float(scale), center=np.zeros(3))

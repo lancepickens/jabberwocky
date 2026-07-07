@@ -21,6 +21,7 @@ dev = ["pytest>=7.0"]
 neural = ["torchvision>=0.15"]  # VGG perceptual loss for --neural
 mesh = ["open3d>=0.17"]  # TSDF fusion + mesh I/O for --mesh
 depth = ["transformers>=4.40"]  # DepthAnything v2 monocular depth for --depth-prior
+web = ["DracoPy>=2.0"]  # Draco-compressed mesh.drc for web transport
 
 [project.scripts]
 splatvid = "splatvid.cli:main"
