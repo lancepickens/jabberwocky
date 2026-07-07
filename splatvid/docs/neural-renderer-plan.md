@@ -3,6 +3,18 @@
 Status: **proposal** (not implemented). Target: a follow-up phase after
 PR #5 (SfM + viewer fixes) merges.
 
+### Decisions (locked)
+
+1. **Feature width `C = 16`.**
+2. **Geometry: freeze early, unfreeze late** — fixed during shader learning,
+   then fine-tuned at low LR near the end.
+3. **Render resolution: full-res first**, half-res-splat + learned upsampling
+   added as a dedicated speed milestone (M3), not before.
+4. **Temporal pairs: both** real temporally-adjacent frames *and* synthesized
+   nearby-camera perturbations.
+5. **No adversarial loss** — rely on LPIPS + temporal. Revisit only if results
+   are too soft after M2.
+
 ## Goal
 
 Eliminate the two artifacts that make splat renders look broken —
@@ -46,7 +58,7 @@ Add a learned per-gaussian feature vector alongside the existing raw params:
 | Param | Shape | Notes |
 |---|---|---|
 | `xyz`, `log_scale`, `quat`, `opacity` | unchanged | geometry proxy |
-| `feature` | `(N, C)` | `C = 16` (start), up to 32 |
+| `feature` | `(N, C)` | `C = 16` (locked) |
 | `color` (SH deg-0) | `(N, 3)` | **keep** — see warm start |
 
 - Keep the SH-0 `color` so the pipeline still has a valid direct-color path
@@ -96,18 +108,21 @@ A small U-Net mapping the splatted buffers to RGB:
 | L1 + SSIM (existing) | anchor absolute color/structure | M1 |
 | **LPIPS** (VGG/Alex) | context-aware perceptual match — the "compare to video" signal | M1 |
 | **Temporal-warp** | **anti-popping** — coherence across nearby views | M2 |
-| **Adversarial** (PatchGAN) | plausibility/sharpness, hallucination | M3 |
 
-- **Temporal-warp (the key anti-popping piece):** sample a pair of nearby
-  cameras, render both, reproject one into the other using rendered depth `D`,
-  and penalize photometric difference in the co-visible region. This *forces*
-  the shader to be view-consistent, which is exactly what removes popping.
-  Without it, a per-frame CNN can *introduce* flicker — so this loss is
-  mandatory for the goal, not optional.
+- **Temporal-warp (the key anti-popping piece):** take a pair of nearby views,
+  render both, reproject one into the other using rendered depth `D`, and
+  penalize photometric difference in the co-visible region. This *forces* the
+  shader to be view-consistent, which is exactly what removes popping. Without
+  it a per-frame CNN can *introduce* flicker — so this loss is mandatory for the
+  goal, not optional. **Pairs come from both** sources (decision 4): real
+  temporally-adjacent registered frames (with GT on both sides), and
+  synthesized small camera perturbations of a training view (self-supervised
+  consistency between the two renders, covering unseen/turntable directions).
 - **LPIPS** needs a pretrained VGG (torchvision or the `lpips` package) — an
   optional dependency.
-- **Adversarial** (a PatchGAN discriminator = the "context-aware comparator")
-  adds realism but is unstable; gate behind a flag and enable only in M3.
+- **No adversarial loss** (decision 5): LPIPS + temporal are expected to clear
+  the "no popping / no jaggies" bar. A PatchGAN would add sharpness but also
+  instability; only revisit if M2 results look too soft.
 
 ## Component 5 — training (`train.py`)
 
@@ -115,9 +130,10 @@ Two-stage, warm-started:
 
 1. **Geometry stage:** existing gaussian training (direct color) → good proxy
    geometry. Unchanged.
-2. **Neural stage:** train the shader + `feature` (optionally fine-tune
-   geometry jointly at a low LR) with the loss stack. Curriculum: L1+SSIM+LPIPS
-   first, add temporal at M2, adversarial at M3.
+2. **Neural stage:** train the shader + `feature` with geometry **frozen**,
+   then **unfreeze geometry at a low LR near the end** (decision 2) to let it
+   correct residual errors the shader can't paper over. Curriculum:
+   L1+SSIM+LPIPS first, add temporal at M2.
 
 - **Held-out views:** reserve N frames, never supervised, to measure novel-view
   quality (PSNR/LPIPS) — the guard against hallucination degrading unseen
@@ -152,18 +168,20 @@ should be surfaced to users, not hidden.
 | # | Deliverable | Success check |
 |---|---|---|
 | **M0** | feature gaussians + feature rasterizer + trivial 1×1-conv "shader" | reproduces current RGB pipeline within tolerance (plumbing proven) |
-| **M1** | U-Net shader + L1+SSIM+LPIPS | held-out LPIPS improves vs. baseline; visibly denoised |
-| **M2** | temporal-warp loss | flow-warp error across a smooth orbit drops; popping visibly reduced |
-| **M3** | adversarial loss | sharper/plausible; held-out PSNR not tanked |
-| **M4** | half-res splat + upsample | ≥2× faster at equal quality |
-| **M5** (opt) | diffusion pseudo-views | unobserved regions filled plausibly |
+| **M1** | U-Net shader + L1+SSIM+LPIPS (geometry frozen) | held-out LPIPS improves vs. baseline; visibly denoised |
+| **M2** | temporal-warp loss (real + synthesized pairs) + late geometry unfreeze | popping metric drops; held-out quality holds |
+| **M3** | half-res splat + learned upsampling | ≥2× faster at equal quality |
+| **M4** (opt) | diffusion pseudo-views | unobserved regions filled plausibly |
+
+(No adversarial milestone — decision 5. Reintroduce only if M2 looks too soft.)
 
 ## Risks & mitigations
 
 - **Overfitting / bad hallucination on novel views** → held-out metric +
-  temporal + adversarial regularization.
-- **GAN instability** → flagged off by default; M3 only, after M1/M2 are solid.
+  temporal regularization.
 - **Per-frame flicker** → temporal-warp loss is mandatory, not optional.
+- **Results too soft without adversarial** → accepted risk (decision 5);
+  reintroduce a PatchGAN only if M2 held-out results look mushy.
 - **Viewer can't run the shader** → keep raw-gaussian preview; neural is
   offline-first.
 - **Dependency weight** (VGG/LPIPS, diffusion) → optional extras in
@@ -186,17 +204,17 @@ should be surfaced to users, not hidden.
 | `model.py` | `feature` param; carry through densify/prune; keep SH color |
 | `render.py` | C-channel compositing; return feature + alpha + depth buffers |
 | `shader.py` (new) | U-Net module |
-| `losses.py` | `lpips()`, `temporal_warp_loss()`, PatchGAN + GAN losses |
-| `train.py` | two-stage loop, shader optimizer, held-out eval |
-| `cli.py` | `--neural`, `--neural-features C`, `--adversarial`, `--render-scale` |
+| `losses.py` | `lpips()`, `temporal_warp_loss()` |
+| `train.py` | two-stage loop (freeze → late-unfreeze), shader optimizer, held-out eval |
+| `cli.py` | `--neural`, `--render-scale` (feature width fixed at 16) |
 | `pyproject.toml` | optional `neural` extra (torchvision/lpips) |
 | `viewer.html` | unchanged (stays the raw-gaussian preview) |
 
-## Open questions to settle before coding
+## Open questions — resolved
 
-1. Feature width `C` (16 vs 32) — quality vs. splat memory/bandwidth.
-2. Joint vs. frozen geometry in the neural stage.
-3. Half-res splat from the start, or add in M4.
-4. Temporal pairs from real neighbor frames vs. synthesized nearby cameras.
-5. Do we need the adversarial loss at all if LPIPS + temporal already hit the
-   "no popping / no jaggies" bar? (Defer; decide after M2.)
+All five settled; see **Decisions (locked)** at the top. Summary: `C=16`;
+geometry frozen then unfrozen late; full-res first (half-res in M3); temporal
+pairs from both real and synthesized views; no adversarial loss.
+
+Next actionable step: implement **M0** (feature gaussians + feature rasterizer
++ identity shader + sanity test) on a dedicated branch.
