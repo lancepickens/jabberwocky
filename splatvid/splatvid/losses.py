@@ -54,3 +54,65 @@ def psnr(pred: torch.Tensor, target: torch.Tensor) -> float:
     if mse <= 1e-12:
         return 99.0
     return -10.0 * math.log10(mse)
+
+
+# -- perceptual loss (optional; needs torchvision) --------------------------
+
+_VGG = None
+
+
+def perceptual_available() -> bool:
+    """True if a VGG perceptual loss can be constructed (torchvision present)."""
+    try:
+        import torchvision  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _get_vgg(device):
+    """Lazily build a frozen VGG16 feature extractor (first conv blocks)."""
+    global _VGG
+    if _VGG is None:
+        from torchvision.models import VGG16_Weights, vgg16
+
+        net = vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features[:16].eval()
+        for p in net.parameters():
+            p.requires_grad_(False)
+        _VGG = net
+    return _VGG.to(device)
+
+
+def perceptual_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """VGG16 feature-space L1 between two (H, W, 3) images in [0, 1].
+
+    A stand-in for LPIPS (same idea: compare deep features, not raw pixels) that
+    needs only torchvision's pretrained VGG. Raises if torchvision is missing —
+    callers should gate on ``perceptual_available()``.
+    """
+    vgg = _get_vgg(pred.device)
+    mean = torch.tensor([0.485, 0.456, 0.406], device=pred.device)[None, :, None, None]
+    std = torch.tensor([0.229, 0.224, 0.225], device=pred.device)[None, :, None, None]
+
+    def prep(x):
+        x = x.permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
+        return (x - mean) / std
+
+    return (vgg(prep(pred)) - vgg(prep(target))).abs().mean()
+
+
+def neural_image_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    ssim_weight: float = 0.2,
+    perceptual_weight: float = 0.5,
+) -> torch.Tensor:
+    """L1 + SSIM + (optional) VGG perceptual, for the neural-renderer stage.
+
+    Falls back to plain ``image_loss`` when ``perceptual_weight <= 0`` or
+    torchvision is unavailable, so training runs either way.
+    """
+    loss = image_loss(pred, target, ssim_weight)
+    if perceptual_weight > 0 and perceptual_available():
+        loss = loss + perceptual_weight * perceptual_loss(pred, target)
+    return loss

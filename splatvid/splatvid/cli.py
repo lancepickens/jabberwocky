@@ -78,8 +78,19 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         train_size=args.train_size,
         max_gaussians=args.max_gaussians,
         device=args.device,
+        feature_dim=16 if args.neural else 0,
+        neural_iters=args.neural_iters,
     )
-    model = train(rec, frames.images, cfg)
+    shader = None
+    if args.neural:
+        import torch
+
+        from .train import train_neural
+        model, shader = train_neural(rec, frames.images, cfg)
+        torch.save(shader.state_dict(), os.path.join(args.output, "shader.pt"))
+        log.info("Saved neural shader -> shader.pt")
+    else:
+        model = train(rec, frames.images, cfg)
 
     log.info("[4/4] Exporting")
     save_ply(model, os.path.join(args.output, "scene.ply"))
@@ -87,7 +98,8 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
     shutil.copyfile(_viewer_src(), os.path.join(args.output, "index.html"))
     if args.turntable:
         render_turntable(
-            model, rec, os.path.join(args.output, "turntable.mp4"), size=args.train_size
+            model, rec, os.path.join(args.output, "turntable.mp4"),
+            size=args.train_size, shader=shader,
         )
 
     dt = time.time() - t0
@@ -152,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--resume", action="store_true",
                    help="reuse cameras.npz in the output dir and skip SfM "
                         "(same --max-frames/--frame-size as the original run)")
+    r.add_argument("--neural", action="store_true",
+                   help="deferred neural renderer: train a U-Net shader over "
+                        "feature gaussians (experimental; see docs)")
+    r.add_argument("--neural-iters", type=int, default=1500,
+                   help="neural shader training iterations (with --neural)")
     r.set_defaults(fn=cmd_reconstruct)
 
     v = sub.add_parser("view", help="serve a result directory in the web viewer")

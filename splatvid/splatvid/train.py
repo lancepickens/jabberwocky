@@ -5,16 +5,17 @@ from __future__ import annotations
 import logging
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
 import torch
 
-from .losses import image_loss, psnr
+from .losses import image_loss, neural_image_loss, psnr
 from .model import GaussianModel
-from .render import render_model
+from .render import render_features, render_model
 from .sfm import Reconstruction
+from .shader import UNetShader
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,14 @@ class TrainConfig:
     log_every: int = 50
     seed: int = 0
     device: str = "cpu"
+    # -- neural renderer (M1+) ---------------------------------------------
+    feature_dim: int = 0  # >0 enables per-gaussian features (neural stage)
+    neural_iters: int = 1500
+    neural_unfreeze_frac: float = 0.7  # unfreeze geometry at this fraction
+    perceptual_weight: float = 0.5
+    holdout_every: int = 8  # hold out every Nth view for validation
+    neural_lr_shader: float = 1e-3
+    neural_lr_geom: float = 1e-4
 
 
 @dataclass
@@ -94,7 +103,7 @@ def init_model(rec: Reconstruction, cfg: TrainConfig) -> GaussianModel:
     keep = d < np.percentile(d, 98) * 1.5  # drop far fliers that wreck scale init
     model = GaussianModel(
         pts[keep].astype(np.float32), cols[keep].astype(np.float32),
-        device=cfg.device,
+        device=cfg.device, feature_dim=cfg.feature_dim,
     )
     log.info("Initialized %d gaussians from SfM points", model.num_gaussians)
     return model
@@ -185,6 +194,97 @@ def train(
     return model
 
 
+_GEOM_PARAMS = ("xyz", "log_scale", "quat", "color", "opacity")
+
+
+def train_neural(
+    rec: Reconstruction,
+    images: list[np.ndarray],
+    cfg: TrainConfig | None = None,
+    progress_cb=None,
+) -> tuple[GaussianModel, UNetShader]:
+    """Two-stage neural render: geometry (direct colour) then a U-Net shader.
+
+    Stage 1 is the ordinary gaussian optimisation (features ride along, unused).
+    Stage 2 freezes the geometry, trains the U-Net shader + per-gaussian
+    features on L1+SSIM+perceptual, then unfreezes geometry at a low LR near the
+    end (decision 2). Held-out views (every ``holdout_every``-th) measure
+    novel-view quality — the guard against the shader just memorising. Returns
+    (model, shader).
+    """
+    cfg = cfg or TrainConfig()
+    if cfg.feature_dim <= 0:
+        cfg = replace(cfg, feature_dim=16)
+
+    log.info("[neural] stage 1/2: geometry (%d iters)", cfg.iterations)
+    model = train(rec, images, cfg, progress_cb)
+
+    dev = cfg.device
+    shader = UNetShader(cfg.feature_dim).to(dev)
+    geom = [getattr(model, n) for n in _GEOM_PARAMS]
+    for p in geom:
+        p.requires_grad_(False)
+
+    views = build_views(rec, images, cfg.train_size, dev)
+    val_i = set(range(0, len(views), cfg.holdout_every)) if len(views) > cfg.holdout_every else set()
+    train_views = [v for i, v in enumerate(views) if i not in val_i]
+    val_views = [views[i] for i in sorted(val_i)]
+
+    bg = torch.zeros(cfg.feature_dim, device=dev)
+    rng = np.random.default_rng(cfg.seed + 1)
+    opt = torch.optim.Adam(
+        list(shader.parameters()) + [model.feature], lr=cfg.neural_lr_shader
+    )
+    unfreeze_at = int(cfg.neural_unfreeze_frac * cfg.neural_iters)
+    log.info(
+        "[neural] stage 2/2: shader (%d iters, %d train / %d val views)",
+        cfg.neural_iters, len(train_views), len(val_views),
+    )
+
+    for it in range(1, cfg.neural_iters + 1):
+        view = train_views[int(rng.integers(len(train_views)))]
+        pred, _ = render_features(
+            model, shader, view.R, view.t, view.focal, view.cx, view.cy,
+            view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
+        )
+        loss = neural_image_loss(
+            pred, view.image, cfg.ssim_weight, cfg.perceptual_weight
+        )
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        opt.step()
+
+        if it == unfreeze_at and geom:
+            for p in geom:
+                p.requires_grad_(True)
+            opt.add_param_group({"params": geom, "lr": cfg.neural_lr_geom})
+            log.info("[neural] unfroze geometry at iter %d", it)
+
+        if it % cfg.log_every == 0 or it == cfg.neural_iters:
+            vp = _neural_val_psnr(model, shader, val_views, bg)
+            log.info(
+                "[neural] iter %d/%d  loss %.4f  val_psnr %.2f dB",
+                it, cfg.neural_iters, float(loss.detach()), vp,
+            )
+            if progress_cb:
+                progress_cb(it, cfg.neural_iters, vp, model.num_gaussians)
+
+    return model, shader
+
+
+def _neural_val_psnr(model, shader, val_views, bg) -> float:
+    if not val_views:
+        return float("nan")
+    with torch.no_grad():
+        vals = []
+        for v in val_views:
+            pred, _ = render_features(
+                model, shader, v.R, v.t, v.focal, v.cx, v.cy, v.width, v.height, bg=bg
+            )
+            vals.append(psnr(pred, v.image))
+    return float(np.mean(vals))
+
+
 def evaluate(model: GaussianModel, views: list[TrainView], max_views: int = 10) -> float:
     """Mean PSNR over a subset of training views."""
     step = max(1, len(views) // max_views)
@@ -205,6 +305,7 @@ def render_turntable(
     out_path: str,
     n_frames: int = 60,
     size: int = 480,
+    shader: UNetShader | None = None,
 ) -> None:
     """Render an orbit around the scene to a video file (sanity-check output).
 
@@ -263,12 +364,16 @@ def render_turntable(
             down = np.cross(fwd, right)
             R = np.stack([right, down, fwd])  # world-to-cam rows
             t = -R @ eye
-            img, _ = render_model(
-                model,
-                torch.tensor(R, dtype=torch.float32, device=dev),
-                torch.tensor(t, dtype=torch.float32, device=dev),
-                rec.focal * s, rec.cx * s, rec.cy * s, w, h,
-            )
+            R_t = torch.tensor(R, dtype=torch.float32, device=dev)
+            t_t = torch.tensor(t, dtype=torch.float32, device=dev)
+            fx, cxs, cys = rec.focal * s, rec.cx * s, rec.cy * s
+            if shader is not None:
+                fbg = torch.zeros(model.get_feature().shape[1], device=dev)
+                img, _ = render_features(
+                    model, shader, R_t, t_t, fx, cxs, cys, w, h, bg=fbg
+                )
+            else:
+                img, _ = render_model(model, R_t, t_t, fx, cxs, cys, w, h)
             frame = (img.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
             bgr = frame[:, :, ::-1]
             if use_writer:
