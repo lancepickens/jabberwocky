@@ -91,49 +91,95 @@ def _pair_score(
     return score, (E, emask.ravel().astype(bool), pa, pb)
 
 
+def _seed_from_pair(
+    state: _State,
+    tracks: list[Track],
+    track_of_kp: dict[tuple[int, int], int],
+    features: list[FrameFeatures],
+    pm: PairMatch,
+    E: np.ndarray,
+    emask: np.ndarray,
+    pa: np.ndarray,
+    pb: np.ndarray,
+) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], dict[int, np.ndarray]]:
+    """Two-view init from one candidate pair: recover pose, triangulate.
+
+    Returns ``(poses, seed_points)`` without mutating anything the caller
+    has not already staged; ``state.poses`` is set to the candidate poses
+    for the duration so ``_accept_point`` can gate on them.
+    """
+    i, j = pm.i, pm.j
+    _, R, t, pose_mask = cv2.recoverPose(E, pa[emask], pb[emask], state.K)
+    poses = {i: (np.eye(3), np.zeros(3)), j: (R, t.ravel())}
+    state.poses = poses  # so _accept_point sees this candidate's geometry
+
+    inl_idx = np.nonzero(emask)[0]
+    ok_pose = pose_mask.ravel() > 0
+    seed: dict[int, np.ndarray] = {}
+    for local_k, m_idx in enumerate(inl_idx):
+        if not ok_pose[local_k]:
+            continue
+        a, b = pm.matches[m_idx]
+        ti = track_of_kp.get((i, int(a)))
+        if ti is None or ti in seed:
+            continue
+        X = triangulate_point(
+            [(pa[m_idx], *poses[i]), (pb[m_idx], *poses[j])], state.K
+        )
+        if X is None:
+            continue
+        if _accept_point(X, ti, tracks[ti], state, features, max_err=4.0, min_angle=1.0):
+            seed[ti] = X
+    return poses, seed
+
+
 def _init_pair(
     state: _State,
     tracks: list[Track],
     track_of_kp: dict[tuple[int, int], int],
     features: list[FrameFeatures],
     pair_matches: list[PairMatch],
+    min_seed: int = 30,
 ) -> tuple[int, int]:
-    best = None
+    """Choose and build the two-view seed reconstruction.
+
+    Ranking candidate pairs by match count alone favours temporally
+    adjacent frames, whose short baseline triangulates poorly (few points
+    clear the cheirality/reprojection/parallax gates). Instead we rank by
+    the pair score, then pick the pair that yields the largest *realized*
+    seed cloud, so baseline/parallax — not raw match count — decides.
+    """
+    scored = []
     for pm in pair_matches:
         score, aux = _pair_score(features[pm.i], features[pm.j], pm, state.K)
-        if aux is not None and (best is None or score > best[0]):
-            best = (score, pm, aux)
-    if best is None:
+        if aux is not None:
+            scored.append((score, pm, aux))
+    if not scored:
         raise SfMError("No frame pair suitable for initialization (too little parallax?)")
-    _, pm, (E, emask, pa, pb) = best
-    i, j = pm.i, pm.j
+    scored.sort(key=lambda r: -r[0])
 
-    _, R, t, pose_mask = cv2.recoverPose(E, pa[emask], pb[emask], state.K)
-    state.poses[i] = (np.eye(3), np.zeros(3))
-    state.poses[j] = (R, t.ravel())
-
-    # Triangulate the inlier matches of the seed pair.
-    inl_idx = np.nonzero(emask)[0]
-    ok_pose = pose_mask.ravel() > 0
-    n_new = 0
-    for local_k, m_idx in enumerate(inl_idx):
-        if not ok_pose[local_k]:
-            continue
-        a, b = pm.matches[m_idx]
-        ti = track_of_kp.get((i, int(a)))
-        if ti is None or ti in state.track_pts:
-            continue
-        X = triangulate_point(
-            [(pa[m_idx], *state.poses[i]), (pb[m_idx], *state.poses[j])], state.K
+    best: tuple[int, int, int, dict, dict] | None = None
+    for _score, pm, (E, emask, pa, pb) in scored:
+        poses, seed = _seed_from_pair(
+            state, tracks, track_of_kp, features, pm, E, emask, pa, pb
         )
-        if X is None:
-            continue
-        if _accept_point(X, ti, tracks[ti], state, features, max_err=4.0, min_angle=1.0):
-            state.track_pts[ti] = X
-            n_new += 1
-    if n_new < 30:
-        raise SfMError(f"Initial pair ({i},{j}) triangulated only {n_new} points")
-    log.info("Init pair (%d, %d): %d seed points", i, j, n_new)
+        if best is None or len(seed) > best[0]:
+            best = (len(seed), pm.i, pm.j, poses, seed)
+        # A comfortably large seed is plenty to bootstrap; stop early.
+        if len(seed) >= 3 * min_seed:
+            break
+
+    n_seed, i, j, poses, seed = best
+    if n_seed < min_seed:
+        raise SfMError(
+            f"Best init pair ({i},{j}) triangulated only {n_seed} points "
+            f"(need {min_seed}); the video likely has too little camera "
+            "translation (parallax). Move the camera through the scene, "
+            "don't pan in place."
+        )
+    state.poses = poses
+    state.track_pts = seed
+    log.info("Init pair (%d, %d): %d seed points", i, j, n_seed)
     return i, j
 
 
@@ -263,6 +309,38 @@ def _filter_points(
     return len(drop)
 
 
+def _largest_component(n_frames: int, pair_matches: list[PairMatch]) -> set[int]:
+    """Largest connected set of frames in the view graph.
+
+    Real handheld video often breaks into segments with little overlap
+    (fast motion, blur, or the camera looking at unrelated things), which
+    leaves the pairwise-match graph fragmented. Incremental SfM can only
+    grow one connected component, so we run it on the biggest one rather
+    than letting the seed pair decide which island gets reconstructed.
+    """
+    adj: dict[int, set[int]] = {i: set() for i in range(n_frames)}
+    for pm in pair_matches:
+        adj[pm.i].add(pm.j)
+        adj[pm.j].add(pm.i)
+    seen: set[int] = set()
+    best: set[int] = set()
+    for start in range(n_frames):
+        if start in seen:
+            continue
+        stack = [start]
+        comp: set[int] = set()
+        while stack:
+            x = stack.pop()
+            if x in seen:
+                continue
+            seen.add(x)
+            comp.add(x)
+            stack.extend(adj[x] - seen)
+        if len(comp) > len(best):
+            best = comp
+    return best
+
+
 def _run_ba(
     state: _State,
     tracks: list[Track],
@@ -317,13 +395,30 @@ def run_sfm(
         for c, k in tr.obs.items():
             track_of_kp[(c, k)] = ti
 
-    _init_pair(state, tracks, track_of_kp, features, pair_matches)
+    # Reconstruct the largest connected component of the view graph; a
+    # fragmented handheld video otherwise strands most frames on islands
+    # the seed pair cannot reach.
+    component = _largest_component(len(images), pair_matches)
+    if len(component) < 3:
+        raise SfMError(
+            f"Largest connected set of overlapping frames is only "
+            f"{len(component)}; the video does not have enough overlap "
+            "between frames to reconstruct."
+        )
+    if len(component) < len(images):
+        log.info(
+            "View graph fragmented; reconstructing largest component "
+            "(%d of %d frames)", len(component), len(images),
+        )
+    init_pairs = [pm for pm in pair_matches if pm.i in component and pm.j in component]
+
+    _init_pair(state, tracks, track_of_kp, features, init_pairs)
     _triangulate_new(state, tracks, features)
     _run_ba(state, tracks, features, refine_focal=False, max_nfev=20)
 
     since_ba = 0
     while True:
-        remaining = [c for c in range(len(images)) if c not in state.poses]
+        remaining = [c for c in component if c not in state.poses]
         if not remaining:
             break
         cand = _register_next(state, tracks, features, remaining)
