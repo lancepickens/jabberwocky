@@ -81,9 +81,19 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         feature_dim=16 if args.neural else 0,
         neural_iters=args.neural_iters,
         render_scale=args.render_scale,
-        depth_weight=0.5 if args.mesh_supervision else 0.0,
+        depth_weight=0.5 if (args.mesh_supervision or args.depth_prior) else 0.0,
         pseudo_weight=0.5 if args.mesh_supervision else 0.0,
     )
+
+    depth_maps = None
+    if args.depth_prior:
+        from .depth_prior import depth_available, depth_targets as _depth_targets
+
+        if not depth_available():
+            log.error("--depth-prior needs transformers: uv pip install transformers")
+            return 2
+        log.info("Predicting monocular depth (DepthAnything v2)")
+        depth_maps = _depth_targets(rec, frames.images, device=args.device)
 
     mesh_data, prior = None, None
     if args.mesh_supervision:
@@ -105,7 +115,8 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
 
         from .train import train_neural
         model, shader = train_neural(
-            rec, frames.images, cfg, view_prior=prior, mesh=mesh_data
+            rec, frames.images, cfg, view_prior=prior, mesh=mesh_data,
+            depth_targets=depth_maps,
         )
         # Persist everything needed to reproduce the neural render later
         # (features are not in scene.ply, which stores only geometry+colour).
@@ -120,7 +131,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         )
         log.info("Saved neural bundle (shader + features) -> neural.pt")
     else:
-        model = train(rec, frames.images, cfg)
+        model = train(rec, frames.images, cfg, depth_targets=depth_maps)
 
     log.info("[4/4] Exporting")
     save_ply(model, os.path.join(args.output, "scene.ply"))
@@ -256,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--mesh-path", default=None,
                    help="prebuilt mesh.ply for --mesh-supervision "
                         "(default: <output>/mesh.ply)")
+    r.add_argument("--depth-prior", action="store_true",
+                   help="supervise geometry with independent monocular depth "
+                        "(DepthAnything v2); needs the 'depth' extra")
     r.add_argument("--scale-factor", type=float, default=None,
                    help="metres per reconstruction unit (bypasses measurement)")
     r.add_argument("--scale-frame", type=int, default=None,
