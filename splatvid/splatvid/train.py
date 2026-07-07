@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass
 
 import cv2
@@ -172,7 +173,7 @@ def train(
 
         if it % cfg.log_every == 0 or it == cfg.iterations:
             msg = (
-                f"iter {it}/{cfg.iterations}  loss {float(loss):.4f}  "
+                f"iter {it}/{cfg.iterations}  loss {float(loss.detach()):.4f}  "
                 f"psnr {np.mean(recent_psnr):.2f} dB  gaussians {model.num_gaussians}"
             )
             log.info(msg)
@@ -218,6 +219,18 @@ def render_turntable(
     vw = cv2.VideoWriter(
         out_path, cv2.VideoWriter_fourcc(*"mp4v"), 24, (w, h)
     )
+    # Headless OpenCV builds sometimes cannot open the mp4 encoder and fail
+    # silently (producing an empty file). Fall back to a PNG frame sequence
+    # so the render is never lost.
+    use_writer = vw.isOpened()
+    frame_dir = os.path.splitext(out_path)[0] + "_frames"
+    if not use_writer:
+        vw.release()
+        os.makedirs(frame_dir, exist_ok=True)
+        log.warning(
+            "VideoWriter could not open %s; writing PNG frames to %s instead",
+            out_path, frame_dir,
+        )
     with torch.no_grad():
         for k in range(n_frames):
             ang = 2 * math.pi * k / n_frames
@@ -237,6 +250,13 @@ def render_turntable(
                 rec.focal * s, rec.cx * s, rec.cy * s, w, h,
             )
             frame = (img.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-            vw.write(frame[:, :, ::-1])
-    vw.release()
-    log.info("Wrote turntable video: %s", out_path)
+            bgr = frame[:, :, ::-1]
+            if use_writer:
+                vw.write(bgr)
+            else:
+                cv2.imwrite(os.path.join(frame_dir, f"frame_{k:03d}.png"), bgr)
+    if use_writer:
+        vw.release()
+        log.info("Wrote turntable video: %s", out_path)
+    else:
+        log.info("Wrote %d turntable frames: %s", n_frames, frame_dir)

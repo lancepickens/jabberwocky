@@ -58,6 +58,29 @@ class SfMError(RuntimeError):
     pass
 
 
+def load_reconstruction(path: str) -> Reconstruction:
+    """Rebuild a Reconstruction from a ``cameras.npz`` written by the CLI.
+
+    Lets training resume without re-running SfM (see ``splatvid reconstruct
+    --resume``). The frame indices in ``registered`` refer to the extracted
+    frame order, so resuming requires the same ``--max-frames`` /
+    ``--frame-size`` settings that produced the file.
+    """
+    d = np.load(path)
+    registered = [int(i) for i in d["registered"]]
+    poses = {
+        registered[k]: (d["Rs"][k], d["ts"][k]) for k in range(len(registered))
+    }
+    n_pts = d["points"].shape[0]
+    errors = d["point_errors"] if "point_errors" in d.files else np.zeros(n_pts)
+    return Reconstruction(
+        focal=float(d["focal"]), cx=float(d["cx"]), cy=float(d["cy"]),
+        width=int(d["width"]), height=int(d["height"]),
+        poses=poses, points=d["points"], point_colors=d["point_colors"],
+        point_errors=errors, registered=registered,
+    )
+
+
 @dataclass
 class _State:
     K: np.ndarray
@@ -249,8 +272,19 @@ def _register_next(
     tracks: list[Track],
     features: list[FrameFeatures],
     candidates: list[int],
+    min_obs: int = 8,
+    min_inliers: int = 8,
 ) -> int | None:
-    """Register the unposed frame with the most 2D-3D correspondences via PnP."""
+    """Register the next unposed frame via PnP, best-supported first.
+
+    Candidates are tried in order of how many already-triangulated points
+    they observe; a PnP failure falls through to the next candidate rather
+    than aborting registration. Because the caller re-invokes this after
+    every successful registration (each of which triangulates more points),
+    a frame that is too weak now gets retried once its neighbours have
+    filled in more of the cloud. Registration only stops when no remaining
+    frame has even ``min_obs`` correspondences or every PnP fails.
+    """
     counts: dict[int, list[int]] = {c: [] for c in candidates}
     for ti in state.track_pts:
         for c, _k in tracks[ti].obs.items():
@@ -259,8 +293,8 @@ def _register_next(
     order = sorted(candidates, key=lambda c: -len(counts[c]))
     for cand in order:
         tids = counts[cand]
-        if len(tids) < 12:
-            return None  # best candidate is too weak; stop growing
+        if len(tids) < min_obs:
+            break  # sorted desc: everything after this is weaker still
         obj = np.array([state.track_pts[ti] for ti in tids])
         img = np.array(
             [features[cand].keypoints[tracks[ti].obs[cand]] for ti in tids],
@@ -271,8 +305,8 @@ def _register_next(
             reprojectionError=4.0, iterationsCount=300, confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
         )
-        if not ok or inl is None or len(inl) < 10:
-            continue
+        if not ok or inl is None or len(inl) < min_inliers:
+            continue  # try the next-best candidate instead of giving up
         R, _ = cv2.Rodrigues(rvec)
         state.poses[cand] = (R, tvec.ravel())
         log.info(

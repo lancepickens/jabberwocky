@@ -32,7 +32,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
     import numpy as np
 
     from .export import save_ply, save_splat
-    from .sfm import SfMError, run_sfm
+    from .sfm import SfMError, load_reconstruction, run_sfm
     from .train import TrainConfig, train, render_turntable
     from .video import extract_frames
 
@@ -44,26 +44,33 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         args.video, max_frames=args.max_frames, max_dim=args.frame_size
     )
 
-    log.info("[2/4] Structure from motion (%d frames)", len(frames.images))
-    try:
-        rec = run_sfm(frames.images, n_features=args.features)
-    except SfMError as e:
-        log.error("SfM failed: %s", e)
-        log.error(
-            "Tips: use a video that orbits a static, well-textured scene with "
-            "steady motion; avoid pure rotation, motion blur, and reflective surfaces."
-        )
-        return 2
+    cam_path = os.path.join(args.output, "cameras.npz")
+    if args.resume and os.path.exists(cam_path):
+        log.info("[2/4] Resuming: loading cameras from %s (skipping SfM)", cam_path)
+        rec = load_reconstruction(cam_path)
+        log.info("Loaded %d cameras, %d points", len(rec.registered), rec.points.shape[0])
+    else:
+        log.info("[2/4] Structure from motion (%d frames)", len(frames.images))
+        try:
+            rec = run_sfm(frames.images, n_features=args.features)
+        except SfMError as e:
+            log.error("SfM failed: %s", e)
+            log.error(
+                "Tips: use a video that orbits a static, well-textured scene with "
+                "steady motion; avoid pure rotation, motion blur, and reflective surfaces."
+            )
+            return 2
 
-    np.savez_compressed(
-        os.path.join(args.output, "cameras.npz"),
-        focal=rec.focal, cx=rec.cx, cy=rec.cy,
-        width=rec.width, height=rec.height,
-        registered=np.array(rec.registered),
-        Rs=np.stack([rec.poses[i][0] for i in rec.registered]),
-        ts=np.stack([rec.poses[i][1] for i in rec.registered]),
-        points=rec.points, point_colors=rec.point_colors,
-    )
+        np.savez_compressed(
+            cam_path,
+            focal=rec.focal, cx=rec.cx, cy=rec.cy,
+            width=rec.width, height=rec.height,
+            registered=np.array(rec.registered),
+            Rs=np.stack([rec.poses[i][0] for i in rec.registered]),
+            ts=np.stack([rec.poses[i][1] for i in rec.registered]),
+            points=rec.points, point_colors=rec.point_colors,
+            point_errors=rec.point_errors,
+        )
 
     log.info("[3/4] Optimizing gaussians (%d iterations)", args.iterations)
     cfg = TrainConfig(
@@ -125,8 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("reconstruct", help="video -> gaussian splat scene")
     r.add_argument("video", help="input video file (mp4/mov/avi/...)")
     r.add_argument("-o", "--output", default="splat_out", help="output directory")
-    r.add_argument("--max-frames", type=int, default=60,
-                   help="frames sampled from the video (default 60)")
+    r.add_argument("--max-frames", type=int, default=0,
+                   help="frames sampled from the video (default 0 = auto from "
+                        "clip length; denser sampling keeps SfM connected)")
     r.add_argument("--frame-size", type=int, default=960,
                    help="max frame dimension for SfM (default 960)")
     r.add_argument("--features", type=int, default=4000,
@@ -141,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="'cpu', 'cuda', 'mps', or 'auto' (default: best available)")
     r.add_argument("--turntable", action="store_true",
                    help="also render an orbit video of the result")
+    r.add_argument("--resume", action="store_true",
+                   help="reuse cameras.npz in the output dir and skip SfM "
+                        "(same --max-frames/--frame-size as the original run)")
     r.set_defaults(fn=cmd_reconstruct)
 
     v = sub.add_parser("view", help="serve a result directory in the web viewer")
