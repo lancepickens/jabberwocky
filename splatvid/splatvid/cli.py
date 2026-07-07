@@ -107,6 +107,48 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
     save_ply(model, os.path.join(args.output, "scene.ply"))
     save_splat(model, os.path.join(args.output, "scene.splat"))
     shutil.copyfile(_viewer_src(), os.path.join(args.output, "index.html"))
+
+    # Metric scale factor (metres per reconstruction unit), if requested.
+    scale = None
+    if args.scale_factor:
+        scale = args.scale_factor
+    elif args.scale_real_dim and args.scale_frame is not None and args.scale_bbox:
+        from .scale import ScaleSpec, measure_object_extent, scale_from_spec
+
+        spec = ScaleSpec(
+            frame_index=args.scale_frame, bbox=tuple(args.scale_bbox),
+            real_dim_m=args.scale_real_dim, axis=args.scale_axis,
+        )
+        extent, used = measure_object_extent(
+            rec, spec.frame_index, spec.bbox, axis=spec.axis
+        )
+        scale = scale_from_spec(rec, spec)
+        log.info(
+            "Metric scale: object extent %.4f units over %d points -> %.5f m/unit",
+            extent, used.size, scale,
+        )
+
+    if args.mesh:
+        import copy
+
+        import numpy as np
+
+        from .mesh import fuse_tsdf, save_mesh
+
+        log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
+        mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel)
+        mesh_path = os.path.join(args.output, "mesh.ply")
+        save_mesh(mesh, mesh_path)
+        log.info(
+            "Wrote %s (%d verts, %d tris)",
+            mesh_path, len(mesh.vertices), len(mesh.triangles),
+        )
+        if scale:
+            metric = copy.deepcopy(mesh)
+            metric.scale(float(scale), center=np.zeros(3))
+            save_mesh(metric, os.path.join(args.output, "mesh_metric.ply"))
+            log.info("Wrote mesh_metric.ply (metres; scale %.5f m/unit)", scale)
+
     if args.turntable:
         render_turntable(
             model, rec, os.path.join(args.output, "turntable.mp4"),
@@ -183,6 +225,23 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--render-scale", type=float, default=1.0,
                    help="splat features at this fraction of resolution and let "
                         "the shader upsample (e.g. 0.5 = ~4x cheaper; with --neural)")
+    r.add_argument("--mesh", action="store_true",
+                   help="TSDF-fuse the trained gaussians into mesh.ply "
+                        "(requires the 'mesh' extra: uv pip install open3d)")
+    r.add_argument("--mesh-voxel", type=float, default=None,
+                   help="TSDF voxel length override in reconstruction units "
+                        "(default: scene_extent/256)")
+    r.add_argument("--scale-factor", type=float, default=None,
+                   help="metres per reconstruction unit (bypasses measurement)")
+    r.add_argument("--scale-frame", type=int, default=None,
+                   help="registered frame index where the reference object is visible")
+    r.add_argument("--scale-bbox", type=float, nargs=4, default=None,
+                   metavar=("X0", "Y0", "X1", "Y1"),
+                   help="pixel bbox of the reference object in --scale-frame")
+    r.add_argument("--scale-real-dim", type=float, default=None,
+                   help="reference object's real extent in metres (along --scale-axis)")
+    r.add_argument("--scale-axis", default="up",
+                   help="axis of the measured dimension: up|x|y|z|diag (default up)")
     r.set_defaults(fn=cmd_reconstruct)
 
     v = sub.add_parser("view", help="serve a result directory in the web viewer")
