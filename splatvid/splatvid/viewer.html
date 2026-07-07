@@ -88,8 +88,8 @@ void main() {
   if (abs(b) < 1e-9 && a >= c) e1 = vec2(1.0, 0.0);
   if (abs(b) < 1e-9 && a < c) e1 = vec2(0.0, 1.0);
   vec2 e2 = vec2(-e1.y, e1.x);
-  vec2 axis1 = e1 * sqrt(l1) * 2.0;   // 2 sigma
-  vec2 axis2 = e2 * sqrt(l2) * 2.0;
+  vec2 axis1 = e1 * sqrt(l1) * 2.5;   // 2.5 sigma: softer edges without over-bloom
+  vec2 axis2 = e2 * sqrt(l2) * 2.5;
 
   vec4 clip = uProj * cam;
   vec2 ndc = clip.xy / clip.w;
@@ -105,8 +105,11 @@ in vec4 vColor;
 in vec2 vG;
 out vec4 frag;
 void main() {
-  float m2 = 4.0 * dot(vG, vG);        // Mahalanobis^2 (corner is in 2-sigma units)
-  float alpha = vColor.a * exp(-0.5 * m2);
+  float d2 = dot(vG, vG);              // 1.0 at the 2.5-sigma quad edge
+  float alpha = vColor.a * exp(-0.5 * 6.25 * d2);  // Mahalanobis^2 = 6.25 * d2
+  // Antialias the splat silhouette: feather the boundary over ~1 screen pixel
+  // using the screen-space derivative, so edges are smooth, not stair-stepped.
+  alpha *= 1.0 - smoothstep(1.0 - fwidth(d2), 1.0, d2);
   if (alpha < 0.004) discard;
   frag = vec4(vColor.rgb * alpha, alpha);   // premultiplied
 }`;
@@ -339,7 +342,7 @@ function frame() {
 
   const v = viewMatrix();
   const viewZ = [v[2], v[6], v[10]];  // third row = camera z axis in world
-  if (needSort || !lastSortZ || dot3(viewZ, lastSortZ) < 0.999) {
+  if (needSort || !lastSortZ || dot3(viewZ, lastSortZ) < 0.9997) {
     // Ascending dot(pos, camera z-axis) == descending distance along the
     // viewing direction: farthest splats first (back-to-front blending).
     sortSplats(viewZ);
