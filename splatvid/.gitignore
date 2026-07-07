@@ -5,4 +5,8 @@ build/
 dist/
 demo_out/
 splat_out/
+out_*/
+*.mp4
+run*.log
+.venv/
 .pytest_cache/
