@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 import torch
 
@@ -68,9 +69,17 @@ def fuse_tsdf(
     max_render_dim: int = 480,
     clean: bool = True,
     min_cluster_frac: float = 0.001,  # drop clusters < 0.1% of total triangles
+    depth_maps=None,
+    images=None,
     bg=None,
 ):
-    """TSDF-fuse splat depth+colour from every registered camera → Open3D mesh.
+    """TSDF-fuse depth+colour from every registered camera → Open3D mesh.
+
+    Depth source: the trained splat by default, or — for a much cleaner mesh —
+    pass ``depth_maps`` (per-registered-view depth in reconstruction units, e.g.
+    aligned monocular depth) together with ``images`` (the real frames, used as
+    colour). Monocular depth is dense and smooth and independent of the splat's
+    floaters, so the fused surface is markedly better.
 
     Defaults scale with ``rec.scene_extent()``: voxel = extent/256, sdf_trunc =
     4·voxel (Open3D's canonical ratio), depth_trunc = 3·extent (drops far
@@ -98,9 +107,17 @@ def fuse_tsdf(
     )
     intr = o3d.camera.PinholeCameraIntrinsic(rw, rh, rf, rf, rcx, rcy)
     n = 0
-    for fi in rec.registered:
+    for i, fi in enumerate(rec.registered):
         R, t = rec.poses[fi]
-        depth, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
+        if depth_maps is not None:
+            depth = depth_maps[i].astype(np.float32)
+            color = images[fi][:, :, ::-1]  # BGR frame -> RGB
+            if (depth.shape[0], depth.shape[1]) != (rh, rw):
+                depth = cv2.resize(depth, (rw, rh), interpolation=cv2.INTER_NEAREST)
+                color = cv2.resize(color, (rw, rh), interpolation=cv2.INTER_AREA)
+            color = np.ascontiguousarray(color.astype(np.uint8))
+        else:
+            depth, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(np.ascontiguousarray(color)),
             o3d.geometry.Image(np.ascontiguousarray(depth)),

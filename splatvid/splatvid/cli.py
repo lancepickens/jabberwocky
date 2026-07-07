@@ -167,8 +167,15 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
 
         from .mesh import fuse_tsdf, save_mesh
 
-        log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
-        mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel)
+        if depth_maps is not None:
+            log.info("Building TSDF mesh from monocular depth (cleaner surface)")
+            mesh = fuse_tsdf(
+                None, rec, voxel_length=args.mesh_voxel,
+                depth_maps=depth_maps, images=frames.images,
+            )
+        else:
+            log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
+            mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel)
         mesh_path = os.path.join(args.output, "mesh.ply")
         save_mesh(mesh, mesh_path)
         log.info(

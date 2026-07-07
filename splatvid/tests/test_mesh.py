@@ -90,6 +90,23 @@ def test_depth_supervision_smoke():
     assert m.num_gaussians > 0
 
 
+def test_fuse_from_depth_maps():
+    # Fuse from provided depth maps + colour frames (the monocular-depth path).
+    pytest.importorskip("open3d")
+    from splatvid.mesh import fuse_tsdf, render_depth_color
+
+    model, xyz, rgb = _opaque_model_from_scene(n=800)
+    rec = _orbit_reconstruction(xyz, rgb, w=64, h=48)
+    dmaps, images = [], []
+    for fi in rec.registered:
+        R, t = rec.poses[fi]
+        d, c = render_depth_color(model, R, t, rec.focal, rec.cx, rec.cy, rec.width, rec.height)
+        dmaps.append(d)
+        images.append(np.ascontiguousarray(c[:, :, ::-1]))  # RGB -> BGR frame
+    mesh = fuse_tsdf(None, rec, depth_maps=dmaps, images=images, target_faces=3000)
+    assert len(mesh.triangles) > 50
+
+
 def test_mesh_view_prior():
     from splatvid.view_prior import MeshViewPrior, NoopViewPrior
 
