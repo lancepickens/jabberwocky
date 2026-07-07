@@ -206,13 +206,32 @@ def render_turntable(
     n_frames: int = 60,
     size: int = 480,
 ) -> None:
-    """Render an orbit around the scene to a video file (sanity-check output)."""
+    """Render an orbit around the scene to a video file (sanity-check output).
+
+    The orbit follows the plane the cameras actually swept (fitted from the
+    recovered camera centres), so it reproduces captured-like viewpoints. A
+    world-axis circle instead shows the scene from directions that were never
+    filmed — which looks like garbage even when the model is fine.
+    """
     dev = model.xyz.device
     C = rec.camera_centers()
-    center_pts = np.median(rec.points, axis=0)
     rig_center = C.mean(axis=0)
-    radius = float(np.linalg.norm(C - rig_center, axis=1).mean())
-    up_guess = np.array([0.0, -1.0, 0.0])
+    d = C - rig_center
+    _, _, vt = np.linalg.svd(d, full_matrices=False)
+    e0, e1, normal = vt[0], vt[1], vt[2]  # ring plane axes + normal
+    radius = float(np.linalg.norm(d, axis=1).mean())
+    # Aim at the object, not the whole room: robust centre of the nearer points.
+    pc = rec.points - np.median(rec.points, axis=0)
+    r = np.linalg.norm(pc, axis=1)
+    target = np.median(rec.points[r <= np.percentile(r, 80)], axis=0)
+    # Sign the ring normal to agree with the cameras' up axis (world up is the
+    # camera's -y direction mapped back to world).
+    cam_up = np.mean(
+        [rec.poses[i][0].T @ np.array([0.0, -1.0, 0.0]) for i in rec.registered],
+        axis=0,
+    )
+    if np.dot(normal, cam_up) < 0:
+        normal = -normal
 
     s = size / max(rec.width, rec.height)
     w, h = int(rec.width * s), int(rec.height * s)
@@ -234,14 +253,15 @@ def render_turntable(
     with torch.no_grad():
         for k in range(n_frames):
             ang = 2 * math.pi * k / n_frames
-            offset = np.array([math.cos(ang), 0.0, math.sin(ang)]) * max(radius, 1e-3)
-            eye = rig_center + offset
-            fwd = center_pts - eye
+            eye = rig_center + max(radius, 1e-3) * (
+                math.cos(ang) * e0 + math.sin(ang) * e1
+            )
+            fwd = target - eye
             fwd = fwd / (np.linalg.norm(fwd) + 1e-12)
-            right = np.cross(fwd, up_guess)
+            right = np.cross(normal, fwd)
             right /= np.linalg.norm(right) + 1e-12
-            up = np.cross(fwd, right)
-            R = np.stack([right, up, fwd])  # world-to-cam rows
+            down = np.cross(fwd, right)
+            R = np.stack([right, down, fwd])  # world-to-cam rows
             t = -R @ eye
             img, _ = render_model(
                 model,
