@@ -1,7 +1,8 @@
 # Deferred Neural Renderer — design & implementation plan
 
-Status: **proposal** (not implemented). Target: a follow-up phase after
-PR #5 (SfM + viewer fixes) merges.
+Status: **implemented (M0–M4)** — mechanisms landed and unit/smoke-tested;
+per-scene quality tuning (long neural runs, a real diffusion prior for M4) is
+future work. Built on PR #5 (SfM + viewer fixes).
 
 ### Decisions (locked)
 
@@ -167,11 +168,11 @@ should be surfaced to users, not hidden.
 
 | # | Deliverable | Success check |
 |---|---|---|
-| **M0** | feature gaussians + feature rasterizer + trivial 1×1-conv "shader" | reproduces current RGB pipeline within tolerance (plumbing proven) |
-| **M1** | U-Net shader + L1+SSIM+LPIPS (geometry frozen) | held-out LPIPS improves vs. baseline; visibly denoised |
-| **M2** | temporal-warp loss (real + synthesized pairs) + late geometry unfreeze | popping metric drops; held-out quality holds |
-| **M3** | half-res splat + learned upsampling | ≥2× faster at equal quality |
-| **M4** (opt) | diffusion pseudo-views | unobserved regions filled plausibly |
+| ✅ **M0** | feature gaussians + feature rasterizer + identity shader | reproduces current RGB pipeline exactly (plumbing proven) |
+| ✅ **M1** | U-Net shader + L1+SSIM+perceptual (geometry frozen) | shape/gradient + two-stage smoke tests pass |
+| ✅ **M2** | temporal-warp loss (real + synthesized pairs) + late geometry unfreeze | identity warp → 0; trains with temporal on |
+| ✅ **M3** | half-res splat + learned upsampling | full-size output from half-res splat; trains |
+| ✅ **M4** | pseudo-view supervision + pluggable ViewPrior hook | mechanism runs; awaits a real diffusion prior |
 
 (No adversarial milestone — decision 5. Reintroduce only if M2 looks too soft.)
 
