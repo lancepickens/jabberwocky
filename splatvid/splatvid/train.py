@@ -390,6 +390,7 @@ def render_turntable(
     n_frames: int = 60,
     size: int = 480,
     shader: UNetShader | None = None,
+    render_scale: float = 1.0,
 ) -> None:
     """Render an orbit around the scene to a video file (sanity-check output).
 
@@ -454,7 +455,8 @@ def render_turntable(
             if shader is not None:
                 fbg = torch.zeros(model.get_feature().shape[1], device=dev)
                 img, _ = render_features(
-                    model, shader, R_t, t_t, fx, cxs, cys, w, h, bg=fbg
+                    model, shader, R_t, t_t, fx, cxs, cys, w, h, bg=fbg,
+                    render_scale=render_scale,
                 )
             else:
                 img, _ = render_model(model, R_t, t_t, fx, cxs, cys, w, h)

@@ -88,8 +88,18 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
 
         from .train import train_neural
         model, shader = train_neural(rec, frames.images, cfg)
-        torch.save(shader.state_dict(), os.path.join(args.output, "shader.pt"))
-        log.info("Saved neural shader -> shader.pt")
+        # Persist everything needed to reproduce the neural render later
+        # (features are not in scene.ply, which stores only geometry+colour).
+        torch.save(
+            {
+                "shader": shader.state_dict(),
+                "feature": model.get_feature().detach().cpu(),
+                "feature_dim": cfg.feature_dim,
+                "render_scale": cfg.render_scale,
+            },
+            os.path.join(args.output, "neural.pt"),
+        )
+        log.info("Saved neural bundle (shader + features) -> neural.pt")
     else:
         model = train(rec, frames.images, cfg)
 
@@ -100,7 +110,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
     if args.turntable:
         render_turntable(
             model, rec, os.path.join(args.output, "turntable.mp4"),
-            size=args.train_size, shader=shader,
+            size=args.train_size, shader=shader, render_scale=args.render_scale,
         )
 
     dt = time.time() - t0

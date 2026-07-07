@@ -171,6 +171,24 @@ def test_train_neural_pseudo_smoke():
     assert isinstance(shader, UNetShader)
 
 
+def test_render_turntable_neural(tmp_path):
+    # The neural turntable path runs at the training render_scale without error.
+    from splatvid.train import TrainConfig, render_turntable, train_neural
+
+    rec, images = _tiny_reconstruction()
+    cfg = TrainConfig(
+        iterations=2, neural_iters=3, train_size=48, feature_dim=8,
+        densify_from=100, holdout_every=2, log_every=3,
+        perceptual_weight=0.0, temporal_weight=0.0, render_scale=0.5, device="cpu",
+    )
+    model, shader = train_neural(rec, images, cfg)
+    out = str(tmp_path / "tt.mp4")
+    render_turntable(model, rec, out, n_frames=3, size=48, shader=shader, render_scale=0.5)
+    # Either the mp4 or the PNG-frame fallback dir must exist.
+    import os
+    assert os.path.exists(out) or os.path.isdir(out.replace(".mp4", "_frames"))
+
+
 def test_perceptual_loss_optional():
     # perceptual_available() must be a bool; if present, it returns a scalar.
     from splatvid.losses import perceptual_available, perceptual_loss
