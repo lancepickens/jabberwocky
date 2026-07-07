@@ -43,6 +43,18 @@ def _resize_max_dim(img: np.ndarray, max_dim: int) -> np.ndarray:
     )
 
 
+def _auto_max_frames(total: int, fps: float) -> int:
+    """Pick a frame budget from clip length: ~4 keyframes/sec, clamped.
+
+    Denser sampling gives consecutive keyframes more overlap, which keeps
+    the structure-from-motion view graph connected; too many frames just
+    add matching cost. The clamp keeps short clips usable and long clips
+    from exploding.
+    """
+    duration = total / fps if fps > 0 else total / 30.0
+    return int(min(150, max(40, round(duration * 4))))
+
+
 def extract_frames(
     video_path: str,
     max_frames: int = 80,
@@ -55,6 +67,8 @@ def extract_frames(
     window the frame with the highest Laplacian-variance sharpness (among
     up to ``sharpness_window`` probed frames) is kept, which skips most
     motion-blurred frames without decoding everything at full cost.
+
+    ``max_frames <= 0`` selects the budget automatically from clip length.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(video_path)
@@ -64,6 +78,9 @@ def extract_frames(
 
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    if max_frames <= 0 and total > 0:
+        max_frames = _auto_max_frames(total, fps)
+        log.info("Auto frame budget: %d frames (%.0fs clip)", max_frames, total / fps)
     if total <= 0:
         # Some containers do not report frame counts; decode everything.
         frames_all: list[np.ndarray] = []
@@ -83,6 +100,8 @@ def extract_frames(
             ok, frame = cap.read()
             return frame if ok else None
 
+    if max_frames <= 0:  # containers that only report the count after decode
+        max_frames = _auto_max_frames(total, fps)
     n_windows = min(max_frames, total)
     bounds = np.linspace(0, total, n_windows + 1).astype(int)
 

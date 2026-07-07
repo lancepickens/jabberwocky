@@ -86,6 +86,13 @@ be chosen well. Each verified pair is scored by:
   plane, both of which give no or ill-conditioned parallax. High
   `#H-inliers / #E-inliers` ⇒ score penalty.
 
+The score ranks candidates, but the seed pair is chosen by the *realized*
+seed cloud: each top-ranked pair is actually triangulated and the one that
+yields the most well-conditioned points wins. Ranking by match count alone
+favours temporally adjacent frames, whose short baseline triangulates
+poorly — so this is what lets slow, real handheld video initialize at all
+(`sfm.py::_init_pair`).
+
 For the winning pair:
 
 1. The **essential matrix** `E` is estimated with RANSAC from the matches
@@ -131,10 +138,21 @@ With a seed cloud in hand, remaining frames are added one at a time:
 4. Every 5 registrations, run bundle adjustment (below) and re-filter
    points whose mean reprojection error exceeds 3 px.
 
-Registration stops when no remaining frame has ≥ 12 usable
-correspondences (e.g. frames that never overlap the reconstructed part of
-the scene). A final double round of BA + outlier filtering polishes the
-result.
+Candidates are tried best-supported first; a failed PnP falls through to
+the next rather than aborting, and because registration is retried after
+every success (each adds more points), a frame too weak now gets another
+chance once its neighbours fill in. Registration stops only when no
+remaining frame has even a handful of correspondences or every PnP fails.
+A final double round of BA + outlier filtering polishes the result.
+
+**Fragmented video.** A phone clip often breaks into segments with little
+overlap, so the pairwise-match graph splits into disconnected components
+and incremental SfM can only grow one at a time. Two mitigations run before
+reconstruction: extra cross-component matching (`_bridge_components`) tries
+to reconnect segments the windowed/loop matcher missed, and reconstruction
+then runs on the **largest** remaining connected component
+(`_connected_components`) rather than whichever island the seed pair landed
+in.
 
 ## 5. Bundle adjustment (`ba.py`)
 

@@ -151,33 +151,52 @@ function loadSplat(buffer) {
   const n = Math.floor(buffer.byteLength / 32);
   const f32 = new Float32Array(buffer);
   const u8 = new Uint8Array(buffer);
-  N = n;
-  positions = new Float32Array(n * 3);
+
+  // Pass 1 — robust geometry. From-scratch reconstructions leave a halo of
+  // far "floater" splats; a mean centre / max radius would be dragged out to
+  // them, shrinking the real object to a dot and burying the camera inside
+  // the halo (grey fog). Median centre + distance percentiles ignore them.
+  const median = (arr) => { const s = Float32Array.from(arr).sort(); return s.length ? s[s.length >> 1] : 0; };
+  const xs = new Float32Array(n), ys = new Float32Array(n), zs = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const fo = i*8; xs[i] = f32[fo]; ys[i] = f32[fo+1]; zs[i] = f32[fo+2]; }
+  center = [median(xs), median(ys), median(zs)];
+  const dists = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const dx = xs[i]-center[0], dy = ys[i]-center[1], dz = zs[i]-center[2]; dists[i] = Math.sqrt(dx*dx+dy*dy+dz*dz); }
+  const sorted = Float32Array.from(dists).sort();
+  const pct = (p) => sorted[Math.min(n-1, Math.floor(n*p))] || 0;
+  // Cull far outliers so they don't fog the view. The threshold is a generous
+  // multiple of the object core (70th-pct distance), so a compact, clean scene
+  // (where the core already spans the whole thing) loses nothing — only true
+  // floaters far past the object are dropped.
+  const cullR = 2.0 * pct(0.7) || (pct(1.0) || 1);
+
+  // Pass 2 — keep splats within cullR, pack the data texture and positions.
+  const keep = new Uint8Array(n);
+  let m = 0;
+  for (let i = 0; i < n; i++) { if (dists[i] <= cullR) { keep[i] = 1; m++; } }
+  N = m;
+  positions = new Float32Array(m * 3);
   const texW = 1024;
-  const texH = Math.max(1, Math.ceil((n * 4) / texW));
+  const texH = Math.max(1, Math.ceil((m * 4) / texW));
   const tex = new Float32Array(texW * texH * 4);
-  let cx = 0, cy = 0, cz = 0;
+  let j = 0;
   for (let i = 0; i < n; i++) {
+    if (!keep[i]) continue;
     const fo = i * 8, bo = i * 32;
     const x = f32[fo], y = f32[fo+1], z = f32[fo+2];
-    positions[i*3] = x; positions[i*3+1] = y; positions[i*3+2] = z;
-    cx += x; cy += y; cz += z;
-    const t = i * 16;
+    positions[j*3] = x; positions[j*3+1] = y; positions[j*3+2] = z;
+    const t = j * 16;
     tex[t]   = x; tex[t+1] = y; tex[t+2] = z; tex[t+3] = u8[bo+27] / 255;   // opacity
     tex[t+4] = f32[fo+3]; tex[t+5] = f32[fo+4]; tex[t+6] = f32[fo+5];      // scale
     tex[t+8]  = (u8[bo+28]-128)/128; tex[t+9]  = (u8[bo+29]-128)/128;      // quat wxyz
     tex[t+10] = (u8[bo+30]-128)/128; tex[t+11] = (u8[bo+31]-128)/128;
     tex[t+12] = u8[bo+24]/255; tex[t+13] = u8[bo+25]/255; tex[t+14] = u8[bo+26]/255;
+    j++;
   }
-  center = [cx/n, cy/n, cz/n];
-  let r2 = 0;
-  for (let i = 0; i < n; i++) {
-    const dx = positions[i*3]-center[0], dy = positions[i*3+1]-center[1], dz = positions[i*3+2]-center[2];
-    r2 = Math.max(r2, dx*dx+dy*dy+dz*dz);
-  }
-  sceneRadius = Math.sqrt(r2) || 1;
+  // Frame just outside the kept cloud so the object fills the view with no fog.
+  sceneRadius = Math.min(cullR, pct(0.9)) || 1;
   cam.target = center.slice();
-  cam.radius = sceneRadius * 1.8;
+  cam.radius = cullR * 1.8;
 
   if (dataTex) gl.deleteTexture(dataTex);
   dataTex = gl.createTexture();
@@ -189,10 +208,10 @@ function loadSplat(buffer) {
   gl.uniform1i(U("uData"), 0);
   gl.uniform1i(U("uTexW"), texW);
 
-  order = new Float32Array(n);
-  for (let i = 0; i < n; i++) order[i] = i;
+  order = new Float32Array(N);
+  for (let i = 0; i < N; i++) order[i] = i;
   needSort = true;
-  stat.textContent = `${n.toLocaleString()} splats`;
+  stat.textContent = `${N.toLocaleString()} splats`;
 }
 
 // Counting sort back-to-front along the view direction (65536 buckets).

@@ -31,8 +31,13 @@ prebuilt splatting kernels:
 
 ```bash
 cd splatvid
-pip install -e .          # or: pip install -e '.[dev]' for tests
+uv sync                   # install from uv.lock into .venv
+uv sync --extra dev       # also install pytest for the test suite
 ```
+
+Then prefix commands with `uv run` (e.g. `uv run splatvid ...`), or
+activate the environment. Plain `pip install -e .` also works if you are
+not using uv.
 
 Requires Python ≥ 3.10. CPU-only PyTorch is fine; the best available
 device is picked automatically (CUDA → Apple-Silicon MPS → CPU) and makes
@@ -44,10 +49,10 @@ benchmarking (`scripts/bench_render.py`) and recommended settings.
 
 ```bash
 # Reconstruct a scene from a video
-splatvid reconstruct my_video.mp4 -o out/
+uv run splatvid reconstruct my_video.mp4 -o out/
 
 # Open the interactive viewer (serves out/ on localhost:8000)
-splatvid view out/
+uv run splatvid view out/
 ```
 
 Output directory contents:
@@ -63,8 +68,11 @@ Useful knobs (see `splatvid reconstruct --help`):
 
 - `--iterations 6000 --train-size 640 --max-gaussians 200000` for quality
   (recommended on a GPU; the CPU defaults are deliberately modest).
-- `--max-frames` / `--features` trade SfM robustness against runtime.
+- `--max-frames` / `--features` trade SfM robustness against runtime
+  (`--max-frames 0`, the default, picks a budget from clip length).
 - `--turntable` also renders an orbit video of the reconstruction.
+- `--resume` reuses a previous run's `cameras.npz` and skips straight to
+  training — handy for re-training at higher quality without redoing SfM.
 
 ## What kind of video works
 
@@ -78,8 +86,8 @@ Useful knobs (see `splatvid reconstruct --help`):
 ## Demo without a camera
 
 ```bash
-python scripts/make_demo.py --out demo_out
-splatvid view demo_out
+uv run python scripts/make_demo.py --out demo_out
+uv run splatvid view demo_out
 ```
 
 This renders a synthetic orbit video of a procedurally generated scene
@@ -94,7 +102,7 @@ Extensive documentation lives in [`docs/`](docs/README.md):
   explainer of the whole pipeline (open directly in a browser; includes an
   interactive alpha-compositing demo).
 - [`docs/pipeline-overview.md`](docs/pipeline-overview.md) — architecture,
-  data flow, and coordinate conventions.
+  data flow, coordinate conventions, and the module dependency graph.
 - [`docs/structure-from-motion.md`](docs/structure-from-motion.md) — features,
   epipolar geometry, PnP, triangulation, and bundle adjustment in depth.
 - [`docs/gaussian-splatting.md`](docs/gaussian-splatting.md) — the gaussian
@@ -104,12 +112,14 @@ Extensive documentation lives in [`docs/`](docs/README.md):
   `.ply`/`.splat` layouts and how the WebGL viewer works.
 - [`docs/performance-and-roadmap.md`](docs/performance-and-roadmap.md) —
   Apple Silicon / device selection, benchmarking, and planned improvements.
+- [`docs/testing.md`](docs/testing.md) — how the test suite validates each
+  layer of the architecture, and how to run it.
 
 ## Tests
 
 ```bash
-python -m pytest              # unit tests + slow end-to-end pipeline test
-python -m pytest -m 'not slow'  # fast tests only (~seconds)
+uv run pytest                 # unit tests + slow end-to-end pipeline test
+uv run pytest -m 'not slow'   # fast tests only (~seconds)
 ```
 
 The end-to-end test renders a synthetic orbit video, recovers the camera

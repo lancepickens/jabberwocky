@@ -58,14 +58,31 @@ Ordered roughly by value-per-effort. Items marked **(perf)** speed things
 up; **(quality)** improve output fidelity; **(robust)** widen the set of
 videos that reconstruct.
 
+### Already implemented
+
+- **(robust) Parallax-aware init + largest-component SfM + cross-component
+  bridging.** Seed-pair selection ranks by the realized seed cloud (not raw
+  match count); reconstruction runs on the largest connected component of
+  the view graph; and extra cross-component matching reconnects segments the
+  windowed/loop matcher missed. Together these let ordinary handheld phone
+  video reconstruct instead of aborting in initialization. See
+  `sfm.py::_init_pair`, `_connected_components`, `_bridge_components`.
+- **(robust) Adaptive frame sampling** (`--max-frames 0`): the frame budget
+  scales with clip length so consecutive keyframes keep enough overlap.
+- **(perf) `--resume`** reloads `cameras.npz` and skips SfM, so training can
+  be re-run at higher quality without redoing structure-from-motion.
+
 ### Rasterizer / training
 
-1. **(perf) Batched tile rasterization.** Replace the Python per-tile
-   loop with a padded gather: bucket gaussians by tile into one
-   `(n_tiles, max_per_tile)` index tensor and composite all tiles in a
-   single batched einsum. Removes per-tile kernel-launch overhead — the
-   main thing holding MPS back — at the cost of padding waste. Biggest
-   single speedup available without leaving pure PyTorch.
+1. **(perf) Batched tile rasterization — tried, currently a regression.**
+   Replacing the Python per-tile loop with a padded `(n_active_tiles,
+   max_slots, 16, 16)` gather + batched compositing is numerically identical
+   (bit-exact forward, ~1e-7 relative gradient diff) but measured **slower**
+   on both CPU and MPS: gaussians-per-tile varies widely, so padding every
+   tile in a chunk to the chunk's max slot count adds more FLOPs than the
+   kernel-launch savings recover. The per-tile loop processes each tile's
+   exact workload. A genuine speedup here needs a fused kernel (next item),
+   not pure-PyTorch batching.
 2. **(perf) Custom Metal/CUDA kernel** (or adopting `gsplat`'s kernels as
    an optional accelerator behind the same `render()` signature) for
    another order of magnitude. Keep the pure-PyTorch path as the readable
@@ -102,8 +119,7 @@ videos that reconstruct.
 10. **(quality) Per-frame exposure compensation** (a learned scalar gain
     per view) — phone auto-exposure otherwise bakes brightness seams into
     the model.
-11. **(perf) Cache SfM results** (`cameras.npz` is already written;
-    a `--resume` flag skipping straight to training is trivial plumbing).
+11. ~~**(perf) Cache SfM results**~~ — done (`--resume`, see above).
 12. **(quality) Held-out validation views** during training with PSNR
     reporting, to detect overfitting to the training frames.
 13. **(UX) Live preview**: stream intermediate `.splat` snapshots to the
