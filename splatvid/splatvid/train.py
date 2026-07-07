@@ -37,6 +37,8 @@ class TrainConfig:
     densify_every: int = 150
     densify_grad_threshold: float = 2e-4
     max_gaussians: int = 60_000
+    opacity_reset_every: int = 0  # >0: opacity-reset schedule (floater fix)
+    prune_far_factor: float = 0.0  # >0: prune gaussians beyond factor*point-cloud radius
     max_per_tile: int = 1024
     log_every: int = 50
     seed: int = 0
@@ -148,6 +150,14 @@ def train(
     extent = rec.scene_extent()
     opt = make_optimizer(model, cfg, extent)
 
+    # Far-floater pruning reference: the SfM point cloud marks where the real
+    # scene is; gaussians that drift well beyond it are floaters.
+    prune_center = prune_radius = None
+    if cfg.prune_far_factor > 0:
+        prune_center = np.median(rec.points, axis=0)
+        r = np.linalg.norm(rec.points - prune_center, axis=1)
+        prune_radius = float(cfg.prune_far_factor * np.percentile(r, 95))
+
     xyz_lr_final_factor = 0.01
     densify_until = int(cfg.densify_until_frac * cfg.iterations)
     bg = torch.zeros(3, device=cfg.device)
@@ -220,8 +230,19 @@ def train(
             and it % cfg.densify_every == 0
         ):
             model.densify_and_prune(
-                cfg.densify_grad_threshold, extent, max_gaussians=cfg.max_gaussians
+                cfg.densify_grad_threshold, extent, max_gaussians=cfg.max_gaussians,
+                prune_center=prune_center, prune_radius=prune_radius,
             )
+            opt = make_optimizer(model, cfg, extent)
+
+        # Opacity reset (the 3DGS floater killer): periodically clamp opacities
+        # down so unneeded floaters fade and get pruned next densify pass.
+        if (
+            cfg.opacity_reset_every > 0
+            and cfg.densify_from < it <= densify_until
+            and it % cfg.opacity_reset_every == 0
+        ):
+            model.reset_opacity()
             opt = make_optimizer(model, cfg, extent)
 
         if it % cfg.log_every == 0 or it == cfg.iterations:

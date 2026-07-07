@@ -83,6 +83,8 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         render_scale=args.render_scale,
         depth_weight=0.5 if (args.mesh_supervision or args.depth_prior) else 0.0,
         pseudo_weight=0.5 if args.mesh_supervision else 0.0,
+        opacity_reset_every=max(200, args.iterations // 3) if args.floater_fix else 0,
+        prune_far_factor=3.0 if args.floater_fix else 0.0,
     )
 
     depth_maps = None
@@ -270,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--depth-prior", action="store_true",
                    help="supervise geometry with independent monocular depth "
                         "(DepthAnything v2); needs the 'depth' extra")
+    r.add_argument("--floater-fix", action="store_true",
+                   help="reduce floaters: opacity-reset schedule + prune gaussians "
+                        "far outside the SfM point cloud")
     r.add_argument("--scale-factor", type=float, default=None,
                    help="metres per reconstruction unit (bypasses measurement)")
     r.add_argument("--scale-frame", type=int, default=None,

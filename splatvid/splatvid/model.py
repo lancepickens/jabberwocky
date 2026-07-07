@@ -126,12 +126,25 @@ class GaussianModel(nn.Module):
             self.feature = nn.Parameter(cat("feature"))
         self._reset_grad_accum()
 
+    def reset_opacity(self, value: float = 0.01) -> None:
+        """Clamp all opacities down to ``value`` (the 3DGS opacity-reset trick).
+
+        Gaussians that matter re-earn their opacity via the photometric loss;
+        floaters that don't stay low and get pruned — the direct floater killer
+        that rendered-depth supervision can't reach. Caller must rebuild the
+        optimizer afterwards (the opacity moment state no longer applies)."""
+        with torch.no_grad():
+            logit = float(np.log(value / (1.0 - value)))
+            self.opacity.data.clamp_(max=logit)
+
     def densify_and_prune(
         self,
         grad_threshold: float,
         scene_extent: float,
         min_opacity: float = 0.005,
         max_gaussians: int = 200_000,
+        prune_center: np.ndarray | None = None,
+        prune_radius: float | None = None,
     ) -> None:
         """Split large / clone small high-gradient gaussians; prune weak ones."""
         with torch.no_grad():
@@ -142,6 +155,12 @@ class GaussianModel(nn.Module):
             prune = (self.get_opacity()[:, 0] < min_opacity) | (
                 max_scale > 0.5 * scene_extent
             )
+            if prune_center is not None and prune_radius is not None:
+                # Prune gaussians that have drifted far outside the real scene —
+                # the far floaters depth supervision leaves behind.
+                center = torch.tensor(prune_center, dtype=self.xyz.dtype, device=self.xyz.device)
+                far = (self.xyz.data - center).norm(dim=-1) > float(prune_radius)
+                prune = prune | far
 
             room = max_gaussians - self.num_gaussians
             hot = (avg_grad > grad_threshold) & ~prune
