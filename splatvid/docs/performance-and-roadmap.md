@@ -1,12 +1,34 @@
 # Performance, Apple Silicon, and the improvement roadmap
 
-## Running on Apple Silicon (M-series)
+## Running on Apple Silicon (M-series, incl. M5)
 
 splatvid auto-selects the best torch device: **CUDA → MPS → CPU**
-(`cli.pick_device`). On an M-series Mac, `--device auto` (the default)
-uses **MPS** — PyTorch's Metal backend — for the training stage; the SfM
-stage is NumPy/SciPy/OpenCV and runs on the CPU's NEON/AMX units via
-Accelerate, which is already fast on Apple Silicon.
+(`cli.pick_device`). On an M-series Mac (M1–M5), `--device auto` (the
+default) uses **MPS** — PyTorch's Metal backend — for the training stage;
+the SfM stage is NumPy/SciPy/OpenCV and runs on the CPU's NEON/AMX units
+via Accelerate, which is already fast on Apple Silicon. There is no
+per-chip PyTorch build — Metal abstracts the GPU, so the same wheel that
+runs on an M1 runs on an M5.
+
+**First thing to run on a new Mac:**
+
+```bash
+pip install -e .          # in splatvid/
+splatvid doctor           # or: splatvid doctor --device mps
+```
+
+`splatvid doctor` prints your torch build and device info, then renders a
+tiny scene forward *and* backward on the target device and checks the
+image and gradients match the CPU reference to within float32 tolerance.
+It exercises exactly the operators that are the historically fragile parts
+of the MPS backend — `cumprod` (transmittance), grouped `conv2d` (SSIM),
+`argsort`, `nonzero`, and indexed slice assignment — so a green **PASS**
+means the rasterizer is numerically correct on your machine, not just that
+it runs. If it FAILs, upgrade to the current PyTorch release
+(`pip install --upgrade torch`) and re-run; MPS operator coverage and
+correctness fixes land continuously, so a recent torch matters most on the
+newest chips. The same check runs automatically under `pytest` (the MPS
+case skips on non-Mac machines).
 
 Practical notes:
 
