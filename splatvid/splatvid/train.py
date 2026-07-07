@@ -17,6 +17,7 @@ from .model import GaussianModel
 from .render import render_features, render_model
 from .sfm import Reconstruction
 from .shader import UNetShader
+from .view_prior import NoopViewPrior
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ class TrainConfig:
     neural_lr_shader: float = 1e-3
     neural_lr_geom: float = 1e-4
     render_scale: float = 1.0  # <1 splats at reduced res; shader upsamples
+    pseudo_weight: float = 0.0  # generative pseudo-view supervision (M4; needs a prior)
+    pseudo_perturb: float = 0.12  # rad, novel-camera offset for pseudo-views
 
 
 @dataclass
@@ -249,11 +252,24 @@ def _temporal_term(model, shader, view, pred_a, info_a, vi, train_views, nn_idx,
     return temporal_warp_loss(pred_a, info_a.depth, cam_a, pred_b, cam_b)
 
 
+def _pseudo_term(model, shader, view, prior, bg, cfg, rng):
+    """Generative pseudo-view supervision (M4): render a novel nearby camera and
+    pull it toward the prior's cleaned/hallucinated version of that render."""
+    Rb, tb = _perturb_cam(view, cfg.pseudo_perturb, rng)
+    pred_b, _ = render_features(
+        model, shader, Rb, tb, view.focal, view.cx, view.cy, view.width, view.height,
+        bg=bg, max_per_tile=cfg.max_per_tile, render_scale=cfg.render_scale,
+    )
+    target = prior(pred_b.detach())
+    return (pred_b - target).abs().mean()
+
+
 def train_neural(
     rec: Reconstruction,
     images: list[np.ndarray],
     cfg: TrainConfig | None = None,
     progress_cb=None,
+    view_prior=None,
 ) -> tuple[GaussianModel, UNetShader]:
     """Two-stage neural render: geometry (direct colour) then a U-Net shader.
 
@@ -292,6 +308,7 @@ def train_neural(
     # Nearest-neighbour train view (by camera centre) for the real temporal pair.
     centers = np.stack([_cam_center(v) for v in train_views]) if train_views else np.zeros((0, 3))
     nn_idx = _nearest_neighbours(centers)
+    prior = view_prior if view_prior is not None else NoopViewPrior()
     log.info(
         "[neural] stage 2/2: shader (%d iters, %d train / %d val views)",
         cfg.neural_iters, len(train_views), len(val_views),
@@ -311,6 +328,10 @@ def train_neural(
         if cfg.temporal_weight > 0:
             loss = loss + cfg.temporal_weight * _temporal_term(
                 model, shader, view, pred, info_a, vi, train_views, nn_idx, bg, cfg, rng
+            )
+        if cfg.pseudo_weight > 0:
+            loss = loss + cfg.pseudo_weight * _pseudo_term(
+                model, shader, view, prior, bg, cfg, rng
             )
         opt.zero_grad(set_to_none=True)
         loss.backward()

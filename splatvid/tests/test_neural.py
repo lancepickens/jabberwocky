@@ -137,6 +137,40 @@ def test_train_neural_half_res_smoke():
     assert isinstance(shader, UNetShader)
 
 
+def test_view_prior_noop_and_stub():
+    from splatvid.view_prior import NoopViewPrior
+
+    img = torch.rand(8, 8, 3, requires_grad=True)
+    # No-op prior: target is the detached render, so the pseudo loss is zero.
+    tgt = NoopViewPrior()(img)
+    assert torch.allclose(tgt, img.detach())
+    assert float((img.detach() - tgt).abs().mean()) == 0.0
+
+    # A real prior (stub here) yields a nonzero, differentiable pull.
+    class _Stub:
+        def __call__(self, x):
+            return torch.zeros_like(x)
+
+    loss = (img - _Stub()(img)).abs().mean()
+    loss.backward()
+    assert img.grad is not None and float(img.grad.abs().sum()) > 0.0
+
+
+def test_train_neural_pseudo_smoke():
+    # The pseudo-view (M4) mechanism runs end to end with the default prior.
+    from splatvid.train import TrainConfig, train_neural
+    from splatvid.view_prior import NoopViewPrior
+
+    rec, images = _tiny_reconstruction()
+    cfg = TrainConfig(
+        iterations=2, neural_iters=3, train_size=48, feature_dim=8,
+        densify_from=100, holdout_every=2, log_every=3,
+        perceptual_weight=0.0, temporal_weight=0.0, pseudo_weight=0.5, device="cpu",
+    )
+    model, shader = train_neural(rec, images, cfg, view_prior=NoopViewPrior())
+    assert isinstance(shader, UNetShader)
+
+
 def test_perceptual_loss_optional():
     # perceptual_available() must be a bool; if present, it returns a scalar.
     from splatvid.losses import perceptual_available, perceptual_loss
