@@ -54,6 +54,7 @@ class TrainConfig:
     render_scale: float = 1.0  # <1 splats at reduced res; shader upsamples
     pseudo_weight: float = 0.0  # generative pseudo-view supervision (M4; needs a prior)
     pseudo_perturb: float = 0.12  # rad, novel-camera offset for pseudo-views
+    pseudo_per_view: int = 2  # precomputed mesh novel-view targets per train view
     depth_weight: float = 0.0  # mesh depth supervision on the geometry stage
 
 
@@ -289,6 +290,17 @@ def _pseudo_term(model, shader, view, prior, bg, cfg, rng):
     return (pred_b - target).abs().mean()
 
 
+def _pseudo_term_banked(model, shader, bank, bg, cfg, rng):
+    """Pseudo-view loss against a precomputed mesh target (no per-iter mesh render)."""
+    R, t, focal, cx, cy, target = bank[int(rng.integers(len(bank)))]
+    h, w = target.shape[0], target.shape[1]
+    pred, _ = render_features(
+        model, shader, R, t, focal, cx, cy, w, h, bg=bg,
+        max_per_tile=cfg.max_per_tile, render_scale=cfg.render_scale,
+    )
+    return (pred - target).abs().mean()
+
+
 def train_neural(
     rec: Reconstruction,
     images: list[np.ndarray],
@@ -335,6 +347,18 @@ def train_neural(
     centers = np.stack([_cam_center(v) for v in train_views]) if train_views else np.zeros((0, 3))
     nn_idx = _nearest_neighbours(centers)
     prior = view_prior if view_prior is not None else NoopViewPrior()
+
+    # Precompute mesh novel-view targets once, so the (slow) numpy mesh render
+    # doesn't run every pseudo-view iteration — the loop just resamples the bank.
+    pseudo_bank = None
+    if cfg.pseudo_weight > 0 and hasattr(prior, "render"):
+        pseudo_bank = []
+        for v in train_views:
+            for _ in range(max(1, cfg.pseudo_per_view)):
+                Rb, tb = _perturb_cam(v, cfg.pseudo_perturb, rng)
+                tgt = prior.render(Rb, tb, device=dev)
+                pseudo_bank.append((Rb, tb, v.focal, v.cx, v.cy, tgt))
+        log.info("[neural] precomputed %d mesh pseudo-view targets", len(pseudo_bank))
     log.info(
         "[neural] stage 2/2: shader (%d iters, %d train / %d val views)",
         cfg.neural_iters, len(train_views), len(val_views),
@@ -356,9 +380,14 @@ def train_neural(
                 model, shader, view, pred, info_a, vi, train_views, nn_idx, bg, cfg, rng
             )
         if cfg.pseudo_weight > 0:
-            loss = loss + cfg.pseudo_weight * _pseudo_term(
-                model, shader, view, prior, bg, cfg, rng
-            )
+            if pseudo_bank is not None:
+                loss = loss + cfg.pseudo_weight * _pseudo_term_banked(
+                    model, shader, pseudo_bank, bg, cfg, rng
+                )
+            else:
+                loss = loss + cfg.pseudo_weight * _pseudo_term(
+                    model, shader, view, prior, bg, cfg, rng
+                )
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()

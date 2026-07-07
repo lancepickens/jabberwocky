@@ -55,15 +55,18 @@ class MeshViewPrior(ViewPrior):
         self.focal, self.cx, self.cy = float(focal), float(cx), float(cy)
         self.width, self.height = int(width), int(height)
 
+    def render(self, R, t, device=None, dtype=torch.float32) -> torch.Tensor:
+        """Render the mesh from camera (R, t) → (H, W, 3) target tensor."""
+        from .mesh import render_mesh
+
+        Rn = R.detach().cpu().numpy() if torch.is_tensor(R) else R
+        tn = t.detach().cpu().numpy() if torch.is_tensor(t) else t
+        color, _ = render_mesh(
+            self.mesh, Rn, tn, self.focal, self.cx, self.cy, self.width, self.height
+        )
+        return torch.as_tensor(color, dtype=dtype, device=device)
+
     def __call__(self, image: torch.Tensor, cam=None) -> torch.Tensor:
         if cam is None:
             return image.detach()
-        from .mesh import render_mesh
-
-        R, t = cam[0], cam[1]
-        R = R.detach().cpu().numpy() if torch.is_tensor(R) else R
-        t = t.detach().cpu().numpy() if torch.is_tensor(t) else t
-        color, _ = render_mesh(
-            self.mesh, R, t, self.focal, self.cx, self.cy, self.width, self.height
-        )
-        return torch.as_tensor(color, dtype=image.dtype, device=image.device)
+        return self.render(cam[0], cam[1], device=image.device, dtype=image.dtype)
