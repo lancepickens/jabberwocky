@@ -140,3 +140,52 @@ def test_render_moved_camera():
     )
     assert info.visible.all()
     assert img[32, 32, 2] > 0.5  # blue peak at image center
+
+
+def _feature_scene(seed=0, n=300):
+    from splatvid.model import GaussianModel
+
+    rng = np.random.default_rng(seed)
+    xyz = rng.normal(0.0, 0.4, (n, 3)).astype(np.float32)
+    xyz[:, 2] += 4.0
+    rgb = rng.uniform(0.0, 1.0, (n, 3)).astype(np.float32)
+    return GaussianModel(xyz, rgb, feature_dim=16)
+
+
+def test_feature_render_matches_direct_color():
+    # M0 plumbing: a feature render (feature[:, :3] == colour) decoded by an
+    # identity shader must reproduce the direct-colour rasteriser exactly.
+    from splatvid.render import render_features, render_model
+    from splatvid.shader import IdentityShader
+
+    model = _feature_scene(seed=0)
+    R, t = _identity_cam()
+    args = dict(focal=200.0, cx=48.0, cy=36.0, width=96, height=72)
+
+    rgb_img, _ = render_model(model, R, t, **args)
+    shaded, info = render_features(model, IdentityShader(16), R, t, **args)
+
+    assert shaded.shape == (72, 96, 3)
+    assert torch.allclose(rgb_img, shaded, atol=1e-5)
+    # Auxiliary buffers exist and are sane.
+    assert info.alpha is not None and info.depth is not None
+    assert info.alpha.shape == (72, 96) and info.depth.shape == (72, 96)
+    a = info.alpha.detach()
+    assert float(a.min()) >= 0.0 and float(a.max()) <= 1.0 + 1e-4
+
+
+def test_feature_render_gradients_flow():
+    # Gradients must reach the per-gaussian features through the shader.
+    from splatvid.render import render_features
+    from splatvid.shader import IdentityShader
+
+    model = _feature_scene(seed=1, n=200)
+    R, t = _identity_cam()
+    out, _ = render_features(
+        model, IdentityShader(16), R, t,
+        focal=200.0, cx=48.0, cy=36.0, width=96, height=72,
+    )
+    out.sum().backward()
+    assert model.feature.grad is not None
+    assert torch.isfinite(model.feature.grad).all()
+    assert float(model.feature.grad.abs().sum()) > 0.0

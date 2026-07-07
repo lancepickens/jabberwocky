@@ -45,6 +45,7 @@ class GaussianModel(nn.Module):
         rgb: np.ndarray,
         init_opacity: float = 0.1,
         device: str = "cpu",
+        feature_dim: int = 0,
     ) -> None:
         super().__init__()
         n = xyz.shape[0]
@@ -61,6 +62,17 @@ class GaussianModel(nn.Module):
         self.quat = nn.Parameter(to(quat))
         self.color = nn.Parameter(to(sh))
         self.opacity = nn.Parameter(torch.full((n, 1), float(op), device=device))
+        # Optional learned per-gaussian feature for the neural renderer. Channels
+        # 0-2 start as the base colour so an identity shader reproduces the
+        # direct-colour render; the rest start at zero. Off (None) by default so
+        # the direct-colour pipeline is unchanged.
+        if feature_dim > 0:
+            c = min(3, feature_dim)
+            feat = np.zeros((n, feature_dim), dtype=np.float32)
+            feat[:, :c] = rgb[:, :c]
+            self.feature = nn.Parameter(to(feat))
+        else:
+            self.feature = None
         self.max_grad_accum = torch.zeros(n, device=device)
         self.grad_count = torch.zeros(n, device=device)
 
@@ -80,6 +92,10 @@ class GaussianModel(nn.Module):
 
     def get_rgb(self) -> torch.Tensor:
         return torch.clamp(0.5 + self.SH_C0 * self.color, 0.0, 1.0)
+
+    def get_feature(self) -> torch.Tensor | None:
+        """Raw per-gaussian feature vectors (no activation), or None if off."""
+        return self.feature
 
     # -- densification bookkeeping ------------------------------------------
     def accumulate_grads(self, screen_grad_norm: torch.Tensor, visible: torch.Tensor) -> None:
@@ -106,6 +122,8 @@ class GaussianModel(nn.Module):
         self.quat = nn.Parameter(cat("quat"))
         self.color = nn.Parameter(cat("color"))
         self.opacity = nn.Parameter(cat("opacity"))
+        if self.feature is not None:
+            self.feature = nn.Parameter(cat("feature"))
         self._reset_grad_accum()
 
     def densify_and_prune(
@@ -139,15 +157,16 @@ class GaussianModel(nn.Module):
             split = hot & (max_scale > 0.01 * scene_extent)
             clone = hot & ~split
 
-            extra: dict[str, torch.Tensor] = {k: [] for k in
-                ("xyz", "log_scale", "quat", "color", "opacity")}
+            # Per-gaussian parameters carried through cloning/splitting. The
+            # optional feature rides along like any other (copied for children).
+            names = ["xyz", "log_scale", "quat", "color", "opacity"]
+            if self.feature is not None:
+                names.append("feature")
+            extra: dict[str, list[torch.Tensor]] = {k: [] for k in names}
 
             if int(clone.sum()) > 0:
-                extra["xyz"].append(self.xyz.data[clone])
-                extra["log_scale"].append(self.log_scale.data[clone])
-                extra["quat"].append(self.quat.data[clone])
-                extra["color"].append(self.color.data[clone])
-                extra["opacity"].append(self.opacity.data[clone])
+                for name in names:
+                    extra[name].append(getattr(self, name).data[clone])
 
             if int(split.sum()) > 0:
                 # Two children sampled inside the parent, at 1/1.6 scale.
@@ -157,9 +176,10 @@ class GaussianModel(nn.Module):
                     extra["log_scale"].append(
                         self.log_scale.data[split] - float(np.log(1.6))
                     )
-                    extra["quat"].append(self.quat.data[split])
-                    extra["color"].append(self.color.data[split])
-                    extra["opacity"].append(self.opacity.data[split])
+                    for name in names:
+                        if name in ("xyz", "log_scale"):
+                            continue
+                        extra[name].append(getattr(self, name).data[split])
 
             keep = ~(prune | split)
             packed = (

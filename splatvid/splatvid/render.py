@@ -23,6 +23,8 @@ class RenderInfo:
     means2d: torch.Tensor  # (N, 2) projected centers (holds .grad after backward)
     visible: torch.Tensor  # (N,) bool, gaussian touched at least one tile
     radii: torch.Tensor  # (N,) float pixel radii (0 for culled)
+    alpha: torch.Tensor | None = None  # (H, W) accumulated opacity (return_aux)
+    depth: torch.Tensor | None = None  # (H, W) opacity-weighted depth (return_aux)
 
 
 def quat_to_rotmat_torch(q: torch.Tensor) -> torch.Tensor:
@@ -100,11 +102,19 @@ def render(
     height: int,
     bg: torch.Tensor | None = None,
     max_per_tile: int = 1024,
+    return_aux: bool = False,
 ) -> tuple[torch.Tensor, RenderInfo]:
-    """Render one view. Returns (image (H, W, 3) in [0, 1], RenderInfo)."""
+    """Render one view. Returns (image (H, W, C), RenderInfo).
+
+    ``rgb`` may carry any number of channels ``C``: 3 for direct colour, or a
+    wider learned feature vector for the neural renderer (the compositing math
+    is per-channel). With ``return_aux`` the RenderInfo also carries the
+    accumulated alpha and opacity-weighted depth maps the neural shader needs.
+    """
     dev = xyz.device
+    channels = rgb.shape[1]
     if bg is None:
-        bg = torch.zeros(3, device=dev)
+        bg = torch.zeros(channels, device=dev)
     n = xyz.shape[0]
 
     cov3d = compute_cov3d(scale, quat)
@@ -134,12 +144,15 @@ def render(
     )
 
     # Start from the background; covered tiles overwrite their region.
-    image = torch.zeros(height, width, 3, device=dev) + bg[None, None, :]
+    image = torch.zeros(height, width, channels, device=dev) + bg[None, None, :]
     info = RenderInfo(
         means2d=means2d,
         visible=torch.zeros(n, dtype=torch.bool, device=dev),
         radii=torch.where(on_screen, radii, torch.zeros_like(radii)).detach(),
     )
+    if return_aux:
+        info.alpha = torch.zeros(height, width, device=dev)
+        info.depth = torch.zeros(height, width, device=dev)
     sel = torch.nonzero(on_screen).squeeze(1)
     if sel.numel() == 0:
         return image, info
@@ -155,6 +168,7 @@ def render(
     g_rgb = rgb[sel]
     g_op = opacity[sel, 0]
     g_rad = radii[sel].detach()
+    g_depth = depth[sel].detach() if return_aux else None
 
     n_tx = (width + TILE - 1) // TILE
     n_ty = (height + TILE - 1) // TILE
@@ -209,6 +223,14 @@ def render(
             T_final = T[-1]  # remaining transmittance
             image[y_lo:y_hi, x_lo:x_hi] = tile_rgb + T_final[:, :, None] * bg[None, None, :]
 
+            if return_aux:
+                # Accumulated opacity (1 - transmittance) and opacity-weighted
+                # depth over the same front-to-back weights.
+                info.alpha[y_lo:y_hi, x_lo:x_hi] = 1.0 - T_final
+                info.depth[y_lo:y_hi, x_lo:x_hi] = torch.einsum(
+                    "ghw,g->hw", w, g_depth[idx]
+                )
+
     return image, info
 
 
@@ -222,3 +244,25 @@ def render_model(model, R, t, focal, cx, cy, width, height, bg=None, **kw):
         model.get_opacity(),
         R, t, focal, cx, cy, width, height, bg=bg, **kw,
     )
+
+
+def render_features(model, shader, R, t, focal, cx, cy, width, height, bg=None, **kw):
+    """Neural render: splat per-gaussian features, then decode with ``shader``.
+
+    Returns (rgb (H, W, 3), RenderInfo). ``bg`` defaults to a zero feature
+    vector so the decoded background comes entirely from the shader. Requires
+    a model built with ``feature_dim > 0``.
+    """
+    feat = model.get_feature()
+    if feat is None:
+        raise ValueError("render_features needs a GaussianModel with feature_dim > 0")
+    feat_map, info = render(
+        model.xyz,
+        model.get_scale(),
+        model.get_quat(),
+        feat,
+        model.get_opacity(),
+        R, t, focal, cx, cy, width, height, bg=bg, return_aux=True, **kw,
+    )
+    rgb = shader(feat_map, info.alpha, info.depth)
+    return rgb, info
