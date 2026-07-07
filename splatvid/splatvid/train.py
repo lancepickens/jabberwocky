@@ -186,9 +186,13 @@ def train(
         loss = image_loss(pred, view.image, cfg.ssim_weight)
         if mesh_depths is not None:
             md = mesh_depths[vi]
-            valid = md > 0
+            # Normalise the opacity-weighted depth (Σwz) by accumulated alpha to
+            # get the splat's *surface* depth, comparable to the target; only
+            # supervise confidently-covered pixels (alpha>0.5).
+            surf = info.depth / info.alpha.clamp(min=1e-3)
+            valid = (md > 0) & (info.alpha > 0.5)
             if bool(valid.any()):
-                loss = loss + cfg.depth_weight * (info.depth[valid] - md[valid]).abs().mean()
+                loss = loss + cfg.depth_weight * (surf[valid] - md[valid]).abs().mean()
         opt.zero_grad(set_to_none=True)
         loss.backward()
 
