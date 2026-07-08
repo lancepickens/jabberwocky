@@ -7,6 +7,6 @@ demo_out/
 splat_out/
 out_*/
 *.mp4
-run*.log
+*.log
 .venv/
 .pytest_cache/
