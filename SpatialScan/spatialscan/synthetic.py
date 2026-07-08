@@ -159,20 +159,20 @@ def build_spatial_mov_bytes(baseline_um: int = 19200, hfov_millideg: int = 63000
                             eyes_reversed: bool = False) -> bytes:
     """A tiny ``moov`` tree carrying the spatial atoms the parser looks for.
 
-    Layout: ``moov > trak > mdia > minf > stbl > stsd > hvc1 > vexu >
-    {eyes > {stri, cams > blin}, proj > hfov}``.
+    Mirrors the real iPhone layout: ``... > stsd > hvc1 > {vexu > eyes >
+    {stri, cams > blin}, hfov}`` — note ``hfov`` is a sibling of ``vexu``
+    inside the sample entry, not nested under it.
     """
-    stri_flags = (0x02 | 0x04) | (0x01 if eyes_reversed else 0)  # both eyes present
+    stri_flags = (0x01 | 0x02) | (0x08 if eyes_reversed else 0)  # both eyes present
     stri = _box(b"stri", struct.pack(">I", 0) + bytes([stri_flags]))
     blin = _box(b"blin", struct.pack(">I", baseline_um))
     cams = _box(b"cams", blin)
     eyes = _box(b"eyes", stri + cams)
+    vexu = _box(b"vexu", eyes)
     hfov = _box(b"hfov", struct.pack(">I", hfov_millideg))
-    proj = _box(b"proj", hfov)
-    vexu = _box(b"vexu", eyes + proj)
 
     # hvc1 is a VisualSampleEntry: 78 header bytes then child boxes.
-    hvc1 = _box(b"hvc1", b"\x00" * 78 + vexu)
+    hvc1 = _box(b"hvc1", b"\x00" * 78 + vexu + hfov)
     stsd = _box(b"stsd", struct.pack(">II", 0, 1) + hvc1)  # fullbox + entry count
     stbl = _box(b"stbl", stsd)
     minf = _box(b"minf", stbl)

@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 mesh = ["open3d>=0.17"]  # RGB-D odometry + ScalableTSDFVolume surface extraction
+mvhevc = ["av>=12.0"]  # PyAV bundles a modern ffmpeg that decodes both MV-HEVC views
 
 [project.scripts]
 spatialscan = "spatialscan.cli:main"

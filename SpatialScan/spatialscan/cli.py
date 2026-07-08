@@ -53,9 +53,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cmd_info(args) -> int:
     from .quicktime import extract_spatial_metadata
-    with open(args.video, "rb") as f:
-        blob = f.read(16 << 20)
-    meta = extract_spatial_metadata(blob)
+    from .spatial import read_moov_bytes
+    # The moov (with the stereo atoms) sits at the end of an iPhone .mov; read
+    # just that box instead of the whole clip.
+    meta = extract_spatial_metadata(read_moov_bytes(args.video))
     print(meta.describe())
     if not meta.is_mv_hevc:
         print("note: no MV-HEVC / vexu atoms found — may not be a spatial video")
