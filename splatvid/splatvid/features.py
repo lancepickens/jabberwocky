@@ -181,6 +181,50 @@ def _global_descriptors(features: list[FrameFeatures]) -> np.ndarray:
     return g
 
 
+def _candidate_pairs(
+    features: list[FrameFeatures], window: int, loop_stride: int, retrieval_k: int
+) -> set[tuple[int, int]]:
+    """Frame pairs to match — temporal window + retrieval loop-closures + strided grid.
+
+    **Frame-density-aware:** as the video is sampled more densely, adjacent frames
+    become redundant (tiny baseline), so the temporal window and retrieval-k shrink
+    and the loop stride widens with ``n``. This keeps the candidate count ~O(n)
+    instead of O(n·window) — without it, a 400-frame capture spends most of its
+    matching time on near-identical neighbours (the dense-frame bottleneck). Small
+    captures (n ≲ 80) are unchanged.
+    """
+    n = len(features)
+    ew = max(2, round(window * min(1.0, 80.0 / n))) if n else window
+    er = max(3, round(retrieval_k * min(1.0, 120.0 / n))) if retrieval_k else 0
+    es = max(loop_stride, n // 28)
+    pairs: set[tuple[int, int]] = set()
+    for i in range(n):
+        for d in range(1, ew + 1):
+            if i + d < n:
+                pairs.add((i, i + d))
+    if er > 0 and n > ew + 2:
+        g = _global_descriptors(features)
+        sim = g @ g.T
+        for i in range(n):
+            added = 0
+            for j in np.argsort(-sim[i]):
+                j = int(j)
+                if abs(j - i) <= ew or j == i:
+                    continue
+                lo, hi = (i, j) if i < j else (j, i)
+                if (lo, hi) not in pairs:
+                    pairs.add((lo, hi))
+                    added += 1
+                if added >= er:
+                    break
+    for i in range(0, n, es):
+        for j in range(i + ew + 1, n, es):
+            pairs.add((i, j))
+    if n > 80:
+        log.info("Dense capture (%d frames): window=%d retrieval=%d stride=%d", n, ew, er, es)
+    return pairs
+
+
 def match_frames(
     features: list[FrameFeatures],
     window: int = 6,
@@ -196,34 +240,7 @@ def match_frames(
     produces, found by content rather than a blind stride. Each candidate is
     matched with LightGlue then geometrically verified.
     """
-    n = len(features)
-    pairs: set[tuple[int, int]] = set()
-    for i in range(n):
-        for d in range(1, window + 1):
-            if i + d < n:
-                pairs.add((i, i + d))
-    # Content-based loop closures via global-descriptor retrieval.
-    if retrieval_k > 0 and n > window + 2:
-        g = _global_descriptors(features)
-        sim = g @ g.T
-        for i in range(n):
-            order = np.argsort(-sim[i])
-            added = 0
-            for j in order:
-                j = int(j)
-                if abs(j - i) <= window or j == i:
-                    continue
-                lo, hi = (i, j) if i < j else (j, i)
-                if (lo, hi) not in pairs:
-                    pairs.add((lo, hi))
-                    added += 1
-                if added >= retrieval_k:
-                    break
-    # Sparse strided loop grid too (cheap belt-and-suspenders for long orbits).
-    for i in range(0, n, loop_stride):
-        for j in range(i + window + 1, n, loop_stride):
-            pairs.add((i, j))
-
+    pairs = _candidate_pairs(features, window, loop_stride, retrieval_k)
     out: list[PairMatch] = []
     for i, j in sorted(pairs):
         m = _match_pair(features[i], features[j])
