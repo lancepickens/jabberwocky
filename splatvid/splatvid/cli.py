@@ -243,6 +243,38 @@ def cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mesh(args: argparse.Namespace) -> int:
+    """Rebuild the mesh from an existing splat — no retraining.
+
+    Reloads ``scene.splat`` + ``cameras.npz`` from a reconstruct output dir and
+    re-fuses the surface, so you can try a finer ``--mesh-voxel`` / higher
+    ``--mesh-faces`` (or Poisson) without paying for another training run.
+    """
+    from .export import model_from_splat
+    from .mesh import fuse_tsdf, save_mesh
+    from .sfm import load_reconstruction
+
+    splat = os.path.join(args.output, "scene.splat")
+    cams = os.path.join(args.output, "cameras.npz")
+    if not (os.path.exists(splat) and os.path.exists(cams)):
+        log.error("need %s and %s — run `splatvid reconstruct` first", splat, cams)
+        return 2
+    model = model_from_splat(splat, device=args.device)
+    rec = load_reconstruction(cams)
+    log.info("Rebuilding %s mesh from %d gaussians", args.mesh_method, model.num_gaussians)
+    if args.mesh_method == "poisson":
+        from .mesh import dense_surface_cloud, poisson_mesh
+
+        mesh = poisson_mesh(dense_surface_cloud(model, rec))
+    else:
+        mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel,
+                         target_faces=args.mesh_faces, smooth_iters=args.mesh_smooth)
+    path = os.path.join(args.output, args.mesh_out)
+    save_mesh(mesh, path)
+    log.info("Wrote %s (%d verts, %d tris)", path, len(mesh.vertices), len(mesh.triangles))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="splatvid",
@@ -331,6 +363,20 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("path", help="output directory or .splat file")
     v.add_argument("--port", type=int, default=8000)
     v.set_defaults(fn=cmd_view)
+
+    m = sub.add_parser("mesh", help="rebuild the mesh from an existing splat (no retrain)")
+    m.add_argument("output", help="a reconstruct output dir (with scene.splat + cameras.npz)")
+    m.add_argument("--device", default="auto",
+                   help="'cpu', 'cuda', 'mps', or 'auto' (default: best available)")
+    m.add_argument("--mesh-method", choices=["tsdf", "poisson"], default="tsdf")
+    m.add_argument("--mesh-voxel", type=float, default=None,
+                   help="TSDF voxel length (default scene_extent/256; smaller = finer)")
+    m.add_argument("--mesh-faces", type=int, default=200_000,
+                   help="target triangle count (raise for a denser mesh)")
+    m.add_argument("--mesh-smooth", type=int, default=0,
+                   help="Taubin smoothing passes")
+    m.add_argument("--mesh-out", default="mesh.ply", help="output filename in the dir")
+    m.set_defaults(fn=cmd_mesh)
 
     args = p.parse_args(argv)
     logging.basicConfig(
