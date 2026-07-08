@@ -407,13 +407,18 @@ def render_mesh(
     *,
     bg=(0.0, 0.0, 0.0),
     near: float = 1e-4,
+    shade: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rasterize the mesh from a camera → ``(color (H,W,3) [0,1], depth (H,W))``.
 
     A plain NumPy z-buffer triangle rasterizer with perspective-correct depth and
     barycentric per-vertex colour. No OpenGL, so it runs anywhere (the default
     arbitrary-camera renderer for depth supervision and MeshViewPrior). Depth is
-    camera-space z; 0 means "no surface" (background).
+    camera-space z; 0 means "no surface" (background). With ``shade=True`` the
+    colour is modulated by a per-face (flat) lambert term so surface *relief* is
+    visible — essential for judging geometry (without it, a uniform-colour mesh
+    renders as a flat silhouette). Off by default so supervision output is
+    unchanged.
     """
     R = np.asarray(R, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).ravel()
@@ -458,6 +463,15 @@ def render_mesh(
         inv_z = l0 / z[i0] + l1 / z[i1] + l2 / z[i2]
         pz = 1.0 / np.where(inv_z != 0, inv_z, np.inf)
         cc = l0[..., None] * vc[i0] + l1[..., None] * vc[i1] + l2[..., None] * vc[i2]
+        if shade:
+            # Flat lambert from the camera-space face normal; |dot| makes relief
+            # read regardless of winding, ambient floor keeps shadows non-black.
+            fn = np.cross(V[i1] - V[i0], V[i2] - V[i0])
+            ln = np.linalg.norm(fn)
+            if ln > 1e-12:
+                fn = fn / ln
+                lam = 0.4 + 0.6 * abs(fn[0] * 0.4 - fn[1] * 0.6 - fn[2] * 0.7)
+                cc = cc * lam
 
         zsub = zbuf[miny:maxy + 1, minx:maxx + 1]
         upd = inside & (pz < zsub)
