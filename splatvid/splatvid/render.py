@@ -25,7 +25,8 @@ class RenderInfo:
     visible: torch.Tensor  # (N,) bool, gaussian touched at least one tile
     radii: torch.Tensor  # (N,) float pixel radii (0 for culled)
     alpha: torch.Tensor | None = None  # (H, W) accumulated opacity (return_aux)
-    depth: torch.Tensor | None = None  # (H, W) opacity-weighted depth (return_aux)
+    depth: torch.Tensor | None = None  # (H, W) opacity-weighted mean depth (return_aux)
+    median_depth: torch.Tensor | None = None  # (H, W) depth at transmittance 0.5 (return_aux)
 
 
 def quat_to_rotmat_torch(q: torch.Tensor) -> torch.Tensor:
@@ -154,6 +155,7 @@ def render(
     if return_aux:
         info.alpha = torch.zeros(height, width, device=dev)
         info.depth = torch.zeros(height, width, device=dev)
+        info.median_depth = torch.zeros(height, width, device=dev)
     sel = torch.nonzero(on_screen).squeeze(1)
     if sel.numel() == 0:
         return image, info
@@ -230,8 +232,20 @@ def render(
                 # Accumulated opacity (1 - transmittance) and opacity-weighted
                 # depth over the same front-to-back weights.
                 info.alpha[y_lo:y_hi, x_lo:x_hi] = 1.0 - T_final
-                info.depth[y_lo:y_hi, x_lo:x_hi] = torch.einsum(
-                    "ghw,g->hw", w, g_depth[idx]
+                gd = g_depth[idx]  # (G,) tile gaussian depths
+                info.depth[y_lo:y_hi, x_lo:x_hi] = torch.einsum("ghw,g->hw", w, gd)
+                # Median (surface) depth: z of the first gaussian at which the
+                # front-to-back transmittance drops below 0.5. Unlike mean depth
+                # (Sigma w z), this picks the actual front surface instead of
+                # blending front+back into a phantom mid-surface — what TSDF and
+                # surface-recon papers (2DGS/RaDe-GS) fuse. The argmax index is
+                # hard (non-diff) but the gathered depth still carries grad to xyz.
+                below = T < 0.5  # (G, H_t, W_t)
+                crossed = below.any(dim=0)  # (H_t, W_t) surface was reached
+                first = below.to(gd.dtype).argmax(dim=0)  # first True idx (0 if none)
+                med = gd[first]  # (H_t, W_t) gather along gaussian dim
+                info.median_depth[y_lo:y_hi, x_lo:x_hi] = torch.where(
+                    crossed, med, torch.zeros_like(med)
                 )
 
     return image, info

@@ -7,6 +7,7 @@ import struct
 
 import numpy as np
 import torch
+from torch import nn
 
 from .model import GaussianModel
 
@@ -109,3 +110,25 @@ def load_splat(path: str) -> dict[str, np.ndarray]:
     rgba = rec[:, 24:28].astype(np.float32) / 255.0
     quat = (rec[:, 28:32].astype(np.float32) - 128.0) / 128.0
     return {"xyz": xyz, "scales": scales, "rgba": rgba, "quat": quat}
+
+
+def model_from_splat(path: str, device: str = "cpu") -> GaussianModel:
+    """Rebuild a renderable ``GaussianModel`` from a ``.splat`` file.
+
+    Lets us re-derive a mesh (or re-render) from an already-trained scene with
+    no retraining — e.g. to re-fuse an existing splat with improved depth. The
+    ``.splat`` stores post-activation values, so we invert each activation to
+    recover the raw parameters the model expects.
+    """
+    d = load_splat(path)
+    xyz, scales, rgba, quat = d["xyz"], d["scales"], d["rgba"], d["quat"]
+    rgb = np.clip(rgba[:, :3], 1e-4, 1 - 1e-4)
+    m = GaussianModel(xyz, rgb, device=device)
+    to = lambda a: nn.Parameter(torch.tensor(np.ascontiguousarray(a), dtype=torch.float32, device=device))  # noqa: E731
+    m.log_scale = to(np.log(np.clip(scales, 1e-8, None)))
+    qn = quat / (np.linalg.norm(quat, axis=-1, keepdims=True) + 1e-12)
+    m.quat = to(qn)
+    m.color = to((rgb - 0.5) / GaussianModel.SH_C0)
+    op = np.clip(rgba[:, 3:4], 1e-4, 1 - 1e-4)
+    m.opacity = to(np.log(op / (1 - op)))
+    return m

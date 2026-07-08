@@ -39,6 +39,7 @@ class TrainConfig:
     max_gaussians: int = 60_000
     opacity_reset_every: int = 0  # >0: opacity-reset schedule (floater fix)
     prune_far_factor: float = 0.0  # >0: prune gaussians beyond factor*point-cloud radius
+    flatten_weight: float = 0.0  # >0: flatten gaussians into surface disks (better mesh depth)
     max_per_tile: int = 1024
     log_every: int = 50
     seed: int = 0
@@ -194,6 +195,16 @@ def train(
             return_aux=(mesh_depths is not None),
         )
         loss = image_loss(pred, view.image, cfg.ssim_weight)
+        if cfg.flatten_weight > 0:
+            # Flatten each gaussian toward a thin surface disk: minimise the
+            # smallest scale relative to the middle one (smin/smid → 0 gives a
+            # disk, not a needle). Surface-aligned disks make the rendered
+            # median depth crisp, so the fused mesh follows the true surface
+            # instead of a fuzzy volumetric shell (RaDe-GS / 2DGS insight).
+            s_sorted = model.get_scale().sort(dim=-1).values  # smin, smid, smax
+            loss = loss + cfg.flatten_weight * (
+                s_sorted[:, 0] / (s_sorted[:, 1] + 1e-8)
+            ).mean()
         if mesh_depths is not None:
             md = mesh_depths[vi]
             # Normalise the opacity-weighted depth (Σwz) by accumulated alpha to

@@ -1,4 +1,17 @@
-"""SIFT feature extraction, pairwise matching, and multi-view track building."""
+"""SOTA feature extraction + matching: DISK keypoints + LightGlue matcher.
+
+Replaces the old SIFT + brute-force-ratio pipeline. DISK (learned detector +
+descriptor, Tyszkiewicz 2020) and LightGlue (learned graph matcher, Lindenberger
+2023) run in pure PyTorch via kornia, so they work on CPU / CUDA / Apple-Silicon
+MPS with no native build. They give many more, more accurate, more repeatable
+correspondences than SIFT+BF — especially on the repetitive textures and wide
+baselines of a handheld orbit — which lifts pose accuracy, track density, and
+every downstream stage (init cloud, splat, mesh).
+
+Public surface (unchanged, so ``sfm.py`` is untouched): ``FrameFeatures``,
+``PairMatch``, ``Track``, ``detect_features``, ``match_frames``,
+``build_tracks``, and the ``_match_pair`` / ``_verify_pair`` helpers.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +20,51 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+import torch
 
 log = logging.getLogger(__name__)
+
+# Lazily-built, cached models keyed by (name, device) — loading DISK/LightGlue
+# weights is expensive and they are reused across every frame / pair.
+_MODELS: dict[tuple[str, str], object] = {}
+
+
+def _pick_device(pref: str | None = None) -> str:
+    if pref:
+        return pref
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _get_disk(device: str):
+    key = ("disk", device)
+    if key not in _MODELS:
+        from kornia.feature import DISK  # noqa: PLC0415
+
+        _MODELS[key] = DISK.from_pretrained("depth").to(device).eval()
+        log.info("Loaded DISK detector on %s", device)
+    return _MODELS[key]
+
+
+def _get_lightglue(device: str):
+    key = ("lightglue", device)
+    if key not in _MODELS:
+        from kornia.feature import LightGlueMatcher  # noqa: PLC0415
+
+        _MODELS[key] = LightGlueMatcher("disk").to(device).eval()
+        log.info("Loaded LightGlue matcher on %s", device)
+    return _MODELS[key]
 
 
 @dataclass
 class FrameFeatures:
     keypoints: np.ndarray  # (N, 2) float32 pixel coords
-    descriptors: np.ndarray  # (N, 128) float32
+    descriptors: np.ndarray  # (N, 128) float32 DISK descriptors
     colors: np.ndarray  # (N, 3) float32 RGB in [0, 1], sampled at keypoint
+    hw: tuple[int, int] = (0, 0)  # image (H, W) — LightGlue positional encoding
 
 
 @dataclass
@@ -32,58 +81,75 @@ class Track:
     obs: dict[int, int] = field(default_factory=dict)
 
 
+def _empty(hw: tuple[int, int]) -> FrameFeatures:
+    return FrameFeatures(
+        keypoints=np.zeros((0, 2), np.float32),
+        descriptors=np.zeros((0, 128), np.float32),
+        colors=np.zeros((0, 3), np.float32),
+        hw=hw,
+    )
+
+
 def detect_features(
-    images: list[np.ndarray], n_features: int = 4000
+    images: list[np.ndarray], n_features: int = 4096, device: str | None = None
 ) -> list[FrameFeatures]:
-    sift = cv2.SIFT_create(nfeatures=n_features)
+    """Detect DISK keypoints + descriptors for every BGR frame."""
+    device = _pick_device(device)
+    disk = _get_disk(device)
     out: list[FrameFeatures] = []
     for img in images:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        kps, desc = sift.detectAndCompute(gray, None)
-        if desc is None or len(kps) == 0:
-            out.append(
-                FrameFeatures(
-                    keypoints=np.zeros((0, 2), np.float32),
-                    descriptors=np.zeros((0, 128), np.float32),
-                    colors=np.zeros((0, 3), np.float32),
-                )
-            )
+        h, w = img.shape[:2]
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        t = torch.from_numpy(rgb).to(device).permute(2, 0, 1).float()[None] / 255.0
+        with torch.no_grad():
+            feats = disk(
+                t, n=n_features, window_size=5,
+                score_threshold=0.0, pad_if_not_divisible=True,
+            )[0]
+        kp = feats.keypoints.float().cpu().numpy()
+        desc = feats.descriptors.float().cpu().numpy()
+        if kp.shape[0] == 0:
+            out.append(_empty((h, w)))
             continue
-        pts = np.array([kp.pt for kp in kps], dtype=np.float32)
-        xi = np.clip(pts[:, 0].round().astype(int), 0, img.shape[1] - 1)
-        yi = np.clip(pts[:, 1].round().astype(int), 0, img.shape[0] - 1)
+        xi = np.clip(kp[:, 0].round().astype(int), 0, w - 1)
+        yi = np.clip(kp[:, 1].round().astype(int), 0, h - 1)
         colors = img[yi, xi, ::-1].astype(np.float32) / 255.0  # BGR -> RGB
-        out.append(FrameFeatures(keypoints=pts, descriptors=desc, colors=colors))
+        out.append(
+            FrameFeatures(
+                keypoints=kp.astype(np.float32),
+                descriptors=desc.astype(np.float32),
+                colors=colors,
+                hw=(h, w),
+            )
+        )
     log.info(
-        "Detected features: median %d per frame",
-        int(np.median([f.keypoints.shape[0] for f in out])),
+        "DISK features: median %d per frame",
+        int(np.median([f.keypoints.shape[0] for f in out])) if out else 0,
     )
     return out
 
 
-def _match_pair(
-    fa: FrameFeatures, fb: FrameFeatures, ratio: float = 0.75
-) -> np.ndarray:
-    """Lowe-ratio kNN matching with mutual cross-check. Returns (M, 2) indices."""
+def _match_pair(fa: FrameFeatures, fb: FrameFeatures, device: str | None = None) -> np.ndarray:
+    """LightGlue match between two frames. Returns (M, 2) keypoint indices."""
     if len(fa.keypoints) < 8 or len(fb.keypoints) < 8:
         return np.zeros((0, 2), dtype=int)
-    matcher = cv2.BFMatcher(cv2.NORM_L2)
-    fwd = matcher.knnMatch(fa.descriptors, fb.descriptors, k=2)
-    good_fwd = {}
-    for pair in fwd:
-        if len(pair) == 2 and pair[0].distance < ratio * pair[1].distance:
-            good_fwd[pair[0].queryIdx] = pair[0].trainIdx
-    bwd = matcher.knnMatch(fb.descriptors, fa.descriptors, k=2)
-    good_bwd = {}
-    for pair in bwd:
-        if len(pair) == 2 and pair[0].distance < ratio * pair[1].distance:
-            good_bwd[pair[0].queryIdx] = pair[0].trainIdx
-    out = [
-        (qa, ta)
-        for qa, ta in good_fwd.items()
-        if good_bwd.get(ta, -1) == qa
-    ]
-    return np.array(out, dtype=int) if out else np.zeros((0, 2), dtype=int)
+    from kornia.feature import laf_from_center_scale_ori  # noqa: PLC0415
+
+    device = _pick_device(device)
+    lg = _get_lightglue(device)
+    d0 = torch.from_numpy(fa.descriptors).to(device)
+    d1 = torch.from_numpy(fb.descriptors).to(device)
+    kp0 = torch.from_numpy(fa.keypoints).to(device)[None]
+    kp1 = torch.from_numpy(fb.keypoints).to(device)[None]
+    laf0 = laf_from_center_scale_ori(kp0)
+    laf1 = laf_from_center_scale_ori(kp1)
+    hw0 = torch.tensor(fa.hw, device=device)
+    hw1 = torch.tensor(fb.hw, device=device)
+    with torch.no_grad():
+        _, idxs = lg(d0, d1, laf0, laf1, hw1=hw0, hw2=hw1)
+    if idxs is None or idxs.numel() == 0:
+        return np.zeros((0, 2), dtype=int)
+    return idxs.cpu().numpy().astype(int)
 
 
 def _verify_pair(
@@ -100,16 +166,35 @@ def _verify_pair(
     return matches[mask.ravel().astype(bool)]
 
 
+def _global_descriptors(features: list[FrameFeatures]) -> np.ndarray:
+    """One L2-normalized global vector per frame (mean-pooled descriptors).
+
+    A cheap image-retrieval signature: frames that see the same surface have
+    similar mean descriptors, so cosine similarity surfaces loop-closure
+    candidates that a fixed temporal stride misses.
+    """
+    g = np.zeros((len(features), 128), np.float32)
+    for i, f in enumerate(features):
+        if len(f.descriptors):
+            v = f.descriptors.mean(0)
+            g[i] = v / (np.linalg.norm(v) + 1e-8)
+    return g
+
+
 def match_frames(
     features: list[FrameFeatures],
     window: int = 6,
     loop_stride: int = 15,
     min_matches: int = 30,
+    retrieval_k: int = 5,
 ) -> list[PairMatch]:
-    """Match sequentially-near pairs plus sparse long-range pairs.
+    """Match sequential pairs + retrieval-based loop-closure pairs with LightGlue.
 
-    Video frames are temporally ordered, so most useful pairs are within a
-    small window; sparse long-range pairs add loop closures for orbits.
+    Candidate pairs are (a) every frame to its next ``window`` neighbours
+    (video is temporally ordered) and (b) for each frame, its ``retrieval_k``
+    most globally-similar non-adjacent frames — real loop closures an orbit
+    produces, found by content rather than a blind stride. Each candidate is
+    matched with LightGlue then geometrically verified.
     """
     n = len(features)
     pairs: set[tuple[int, int]] = set()
@@ -117,6 +202,24 @@ def match_frames(
         for d in range(1, window + 1):
             if i + d < n:
                 pairs.add((i, i + d))
+    # Content-based loop closures via global-descriptor retrieval.
+    if retrieval_k > 0 and n > window + 2:
+        g = _global_descriptors(features)
+        sim = g @ g.T
+        for i in range(n):
+            order = np.argsort(-sim[i])
+            added = 0
+            for j in order:
+                j = int(j)
+                if abs(j - i) <= window or j == i:
+                    continue
+                lo, hi = (i, j) if i < j else (j, i)
+                if (lo, hi) not in pairs:
+                    pairs.add((lo, hi))
+                    added += 1
+                if added >= retrieval_k:
+                    break
+    # Sparse strided loop grid too (cheap belt-and-suspenders for long orbits).
     for i in range(0, n, loop_stride):
         for j in range(i + window + 1, n, loop_stride):
             pairs.add((i, j))

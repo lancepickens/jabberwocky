@@ -85,6 +85,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         pseudo_weight=0.5 if args.mesh_supervision else 0.0,
         opacity_reset_every=max(200, args.iterations // 3) if args.floater_fix else 0,
         prune_far_factor=3.0 if args.floater_fix else 0.0,
+        flatten_weight=args.flatten,
     )
 
     depth_maps = None
@@ -291,6 +292,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--floater-fix", action="store_true",
                    help="reduce floaters: opacity-reset schedule + prune gaussians "
                         "far outside the SfM point cloud")
+    r.add_argument("--flatten", type=float, default=0.0, metavar="W",
+                   help="flatten gaussians into surface disks (weight, e.g. 0.1) for "
+                        "a crisper median-depth mesh; 0 disables")
     r.add_argument("--scale-factor", type=float, default=None,
                    help="metres per reconstruction unit (bypasses measurement)")
     r.add_argument("--scale-frame", type=int, default=None,

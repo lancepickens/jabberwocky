@@ -107,6 +107,25 @@ def test_fuse_from_depth_maps():
     assert len(mesh.triangles) > 50
 
 
+def test_poisson_mesh_reconstructs_sphere():
+    # Screened Poisson on a clean oriented point cloud recovers the surface.
+    pytest.importorskip("open3d")
+    import open3d as o3d
+
+    from splatvid.mesh import poisson_mesh
+
+    rng = np.random.default_rng(0)
+    p = rng.normal(size=(20000, 3))
+    p /= np.linalg.norm(p, axis=1, keepdims=True)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(p)
+    pcd.normals = o3d.utility.Vector3dVector(p)  # outward normals = positions
+    m = poisson_mesh(pcd, depth=8, density_quantile=0.01, target_faces=None)
+    assert len(m.triangles) > 1000
+    r = np.linalg.norm(np.asarray(m.vertices), axis=1)
+    assert abs(r.mean() - 1.0) < 0.05 and r.std() < 0.05  # a unit sphere
+
+
 def test_save_mesh_draco(tmp_path):
     import os
 

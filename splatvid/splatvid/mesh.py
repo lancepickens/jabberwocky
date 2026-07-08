@@ -35,10 +35,11 @@ def render_depth_color(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render one camera to ``(depth (H,W) float32, color (H,W,3) uint8 RGB)``.
 
-    ``depth`` is camera-space z of the front surface, de-biased by dividing the
-    opacity-weighted depth by the accumulated alpha and zeroed where the splat
-    is see-through (``alpha < 0.5``) so downstream TSDF treats those pixels as
-    "no measurement" rather than integrating a phantom near-zero surface.
+    ``depth`` is the camera-space z of the front surface: the *median* depth (z
+    at which front-to-back transmittance crosses 0.5), which picks the actual
+    surface instead of the opacity-weighted *mean* (which blends front and back
+    into a phantom mid-surface). Zeroed where the splat is see-through
+    (``alpha < 0.5``) so downstream TSDF treats those pixels as "no measurement".
     """
     dev = model.xyz.device
     Rt = torch.as_tensor(R, dtype=torch.float32, device=dev)
@@ -49,8 +50,7 @@ def render_depth_color(
             int(width), int(height), bg=bg, return_aux=True,
         )
         alpha = info.alpha
-        depth = info.depth / alpha.clamp(min=1e-3)
-        depth = torch.where(alpha >= 0.5, depth, torch.zeros_like(depth))
+        depth = torch.where(alpha >= 0.5, info.median_depth, torch.zeros_like(alpha))
         color = (img.clamp(0.0, 1.0) * 255.0).to(torch.uint8)
     return (
         depth.cpu().numpy().astype(np.float32),
@@ -69,6 +69,7 @@ def fuse_tsdf(
     max_render_dim: int = 480,
     clean: bool = True,
     min_cluster_frac: float = 0.001,  # drop clusters < 0.1% of total triangles
+    smooth_iters: int = 0,  # >0: Taubin smoothing passes (denoise, volume-preserving)
     depth_maps=None,
     images=None,
     bg=None,
@@ -145,6 +146,70 @@ def fuse_tsdf(
             thresh = max(int(n_tri.sum() * min_cluster_frac), 20)
             keep = n_tri >= thresh
             mesh.remove_triangles_by_mask(~keep[clusters])
+    if target_faces is not None and len(mesh.triangles) > target_faces:
+        mesh = mesh.simplify_quadric_decimation(int(target_faces))
+    mesh.remove_degenerate_triangles()
+    mesh.remove_unreferenced_vertices()
+    if smooth_iters > 0:
+        # Taubin smoothing: alternating λ/μ Laplacian passes that denoise the
+        # marching-cubes staircase without the shrinkage plain Laplacian causes.
+        mesh = mesh.filter_smooth_taubin(number_of_iterations=int(smooth_iters))
+    mesh.compute_vertex_normals()
+    return mesh
+
+
+def poisson_mesh(
+    source,
+    *,
+    depth: int = 10,
+    density_quantile: float = 0.04,
+    voxel_downsample: int = 400_000,
+    target_faces: int | None = 300_000,
+):
+    """Screened-Poisson surface from an oriented point cloud (hole-filling).
+
+    TSDF fusion leaves holes wherever coverage is thin (the periphery of a
+    handheld orbit); screened Poisson (Kazhdan 2013) instead fits one globally
+    watertight surface, so it completes those gaps — the research's recommended
+    complement to TSDF for a dense, closed mesh. ``source`` may be an Open3D
+    point cloud, an Open3D mesh, or a ``MeshData``; meshes are converted to an
+    oriented point cloud from their vertices/normals/colours. Low-support
+    vertices (bottom ``density_quantile`` of Poisson density) are trimmed so the
+    surface doesn't balloon into unobserved space. Returns an Open3D mesh.
+    """
+    o3d = _import_o3d()
+    if isinstance(source, o3d.geometry.PointCloud):
+        pcd = source
+    else:  # Open3D mesh or MeshData -> oriented point cloud
+        if hasattr(source, "vertices"):  # Open3D mesh
+            verts = np.asarray(source.vertices)
+            normals = np.asarray(source.vertex_normals)
+            cols = np.asarray(source.vertex_colors)
+        else:  # MeshData
+            verts, cols = source.verts, source.vert_colors
+            normals = np.zeros((0, 3))
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.ascontiguousarray(verts))
+        if normals.shape[0] == verts.shape[0]:
+            pcd.normals = o3d.utility.Vector3dVector(np.ascontiguousarray(normals))
+        if cols is not None and len(cols) == len(verts):
+            pcd.colors = o3d.utility.Vector3dVector(np.clip(cols, 0, 1))
+
+    if voxel_downsample and len(pcd.points) > voxel_downsample:
+        # Points lie on a 2D surface, so cap the count directly rather than
+        # guessing a voxel size (a volume-based guess over-decimates badly).
+        pcd = pcd.random_down_sample(voxel_downsample / len(pcd.points))
+    if not pcd.has_normals():
+        pcd.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=30))
+        pcd.orient_normals_consistent_tangent_plane(30)
+
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd, depth=int(depth)
+    )
+    densities = np.asarray(densities)
+    if densities.size and density_quantile > 0:
+        keep = densities >= np.quantile(densities, density_quantile)
+        mesh.remove_vertices_by_mask(~keep)
     if target_faces is not None and len(mesh.triangles) > target_faces:
         mesh = mesh.simplify_quadric_decimation(int(target_faces))
     mesh.remove_degenerate_triangles()
