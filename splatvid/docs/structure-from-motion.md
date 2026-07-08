@@ -1,5 +1,12 @@
 # Structure from motion: video → cameras + point cloud
 
+> **Note (overhaul):** the feature/matching stage was rewritten from SIFT +
+> brute-force to the learned **DISK + LightGlue** stack (kornia) with retrieval
+> loop closure — see [`overhaul-report.md`](overhaul-report.md). The mapper /
+> bundle-adjustment stages below are unchanged; sections describing SIFT
+> descriptors now refer to DISK descriptors, and Lowe-ratio matching to
+> LightGlue. Result on IMG_6547: 40/40 cameras, 0.61 px reprojection error.
+
 SfM answers two questions simultaneously from pixels alone: *where was the
 camera for each frame?* and *where are the observed points in 3D?* This
 document walks the exact algorithm in `video.py`, `features.py`, `sfm.py`,
