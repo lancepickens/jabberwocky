@@ -129,27 +129,42 @@ def detect_features(
     return out
 
 
-def _match_pair(fa: FrameFeatures, fb: FrameFeatures, device: str | None = None) -> np.ndarray:
-    """LightGlue match between two frames. Returns (M, 2) keypoint indices."""
-    if len(fa.keypoints) < 8 or len(fb.keypoints) < 8:
-        return np.zeros((0, 2), dtype=int)
+def _prep_frame(f: FrameFeatures, device: str):
+    """Move one frame's descriptors + LAFs to the device *once*.
+
+    Cached across all pairs a frame appears in — otherwise each frame's tensors
+    were re-created and re-transferred to the (MPS/CUDA) device for every one of
+    its ~5-10 candidate pairs, a big chunk of per-pair matching cost on dense
+    captures. Returns ``(desc, laf, hw)`` or ``None`` if too few keypoints.
+    """
+    if len(f.keypoints) < 8:
+        return None
     from kornia.feature import laf_from_center_scale_ori  # noqa: PLC0415
 
-    device = _pick_device(device)
+    d = torch.from_numpy(f.descriptors).to(device)
+    laf = laf_from_center_scale_ori(torch.from_numpy(f.keypoints).to(device)[None])
+    hw = torch.tensor(f.hw, device=device)
+    return d, laf, hw
+
+
+def _match_prepped(pa, pb, device: str) -> np.ndarray:
+    """LightGlue match from pre-moved frame tensors. Returns (M, 2) indices."""
+    if pa is None or pb is None:
+        return np.zeros((0, 2), dtype=int)
     lg = _get_lightglue(device)
-    d0 = torch.from_numpy(fa.descriptors).to(device)
-    d1 = torch.from_numpy(fb.descriptors).to(device)
-    kp0 = torch.from_numpy(fa.keypoints).to(device)[None]
-    kp1 = torch.from_numpy(fb.keypoints).to(device)[None]
-    laf0 = laf_from_center_scale_ori(kp0)
-    laf1 = laf_from_center_scale_ori(kp1)
-    hw0 = torch.tensor(fa.hw, device=device)
-    hw1 = torch.tensor(fb.hw, device=device)
+    d0, laf0, hw0 = pa
+    d1, laf1, hw1 = pb
     with torch.no_grad():
         _, idxs = lg(d0, d1, laf0, laf1, hw1=hw0, hw2=hw1)
     if idxs is None or idxs.numel() == 0:
         return np.zeros((0, 2), dtype=int)
     return idxs.cpu().numpy().astype(int)
+
+
+def _match_pair(fa: FrameFeatures, fb: FrameFeatures, device: str | None = None) -> np.ndarray:
+    """LightGlue match between two frames (standalone; preps both). Returns (M, 2)."""
+    device = _pick_device(device)
+    return _match_prepped(_prep_frame(fa, device), _prep_frame(fb, device), device)
 
 
 def _verify_pair(
@@ -241,9 +256,11 @@ def match_frames(
     matched with LightGlue then geometrically verified.
     """
     pairs = _candidate_pairs(features, window, loop_stride, retrieval_k)
+    device = _pick_device()
+    preps = [_prep_frame(f, device) for f in features]  # each frame -> device once
     out: list[PairMatch] = []
     for i, j in sorted(pairs):
-        m = _match_pair(features[i], features[j])
+        m = _match_prepped(preps[i], preps[j], device)
         m = _verify_pair(features[i], features[j], m)
         if len(m) >= min_matches:
             out.append(PairMatch(i=i, j=j, matches=m))
