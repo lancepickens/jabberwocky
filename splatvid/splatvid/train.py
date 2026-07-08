@@ -40,6 +40,7 @@ class TrainConfig:
     opacity_reset_every: int = 0  # >0: opacity-reset schedule (floater fix)
     prune_far_factor: float = 0.0  # >0: prune gaussians beyond factor*point-cloud radius
     flatten_weight: float = 0.0  # >0: flatten gaussians into surface disks (better mesh depth)
+    appearance: bool = False  # per-view gain/bias to absorb exposure/WB drift (handheld video)
     max_per_tile: int = 1024
     log_every: int = 50
     seed: int = 0
@@ -151,6 +152,19 @@ def train(
     extent = rec.scene_extent()
     opt = make_optimizer(model, cfg, extent)
 
+    # Per-view appearance correction (gain + bias) that absorbs the exposure /
+    # white-balance drift of handheld phone video, so the optimizer doesn't
+    # spawn floaters to explain photometric inconsistency between frames. A
+    # training-only nuisance variable — discarded at export/turntable (the
+    # gaussian model itself is unchanged). Its own persistent optimizer so its
+    # Adam state survives the densification-driven model-optimizer rebuilds.
+    app_gain = app_bias = app_opt = None
+    if cfg.appearance:
+        nv = len(views)
+        app_gain = torch.zeros(nv, 3, device=cfg.device, requires_grad=True)  # log-gain
+        app_bias = torch.zeros(nv, 3, device=cfg.device, requires_grad=True)
+        app_opt = torch.optim.Adam([app_gain, app_bias], lr=1e-3, eps=1e-15)
+
     # Far-floater pruning reference: the SfM point cloud marks where the real
     # scene is; gaussians that drift well beyond it are floaters.
     prune_center = prune_radius = None
@@ -195,7 +209,14 @@ def train(
             view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
             return_aux=(mesh_depths is not None),
         )
+        if cfg.appearance:
+            # Map the render through this view's exposure/WB before comparing,
+            # so photometric drift is explained here, not by extra gaussians.
+            pred = (pred * torch.exp(app_gain[vi]) + app_bias[vi]).clamp(0.0, 1.0)
         loss = image_loss(pred, view.image, cfg.ssim_weight)
+        if cfg.appearance:
+            # Keep corrections small (identity gain, zero bias) as a prior.
+            loss = loss + 0.01 * (app_gain[vi].pow(2).sum() + app_bias[vi].pow(2).sum())
         if cfg.flatten_weight > 0:
             # Flatten each gaussian toward a thin surface disk: minimise the
             # smallest scale relative to the middle one (smin/smid → 0 gives a
@@ -230,9 +251,13 @@ def train(
                     it, n_nonfinite,
                 )
             opt.zero_grad(set_to_none=True)
+            if app_opt is not None:
+                app_opt.zero_grad(set_to_none=True)
             continue
 
         opt.zero_grad(set_to_none=True)
+        if app_opt is not None:
+            app_opt.zero_grad(set_to_none=True)
         loss.backward()
 
         # Screen-space gradient statistics drive densification (NDC units).
@@ -253,9 +278,13 @@ def train(
             if n_nonfinite <= 3 or n_nonfinite % 100 == 0:
                 log.warning("Non-finite gradient at iter %d; skipping step", it)
             opt.zero_grad(set_to_none=True)
+            if app_opt is not None:
+                app_opt.zero_grad(set_to_none=True)
             continue
 
         opt.step()
+        if app_opt is not None:
+            app_opt.step()
 
         # Exponential xyz learning-rate decay, as in the reference trainer.
         decay = xyz_lr_final_factor ** (it / cfg.iterations)

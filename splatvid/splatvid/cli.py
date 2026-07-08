@@ -101,6 +101,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         opacity_reset_every=max(200, args.iterations // 3) if args.floater_fix else 0,
         prune_far_factor=3.0 if args.floater_fix else 0.0,
         flatten_weight=args.flatten,
+        appearance=args.appearance,
     )
 
     depth_maps = None
@@ -366,6 +367,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--flatten", type=float, default=0.0, metavar="W",
                    help="flatten gaussians into surface disks (weight, e.g. 0.1) for "
                         "a crisper median-depth mesh; 0 disables")
+    r.add_argument("--appearance", action="store_true",
+                   help="per-view gain/bias to absorb handheld exposure/white-balance "
+                        "drift (fewer floaters); discarded at export")
     r.add_argument("--scale-factor", type=float, default=None,
                    help="metres per reconstruction unit (bypasses measurement)")
     r.add_argument("--scale-frame", type=int, default=None,
