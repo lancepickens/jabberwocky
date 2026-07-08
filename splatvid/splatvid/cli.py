@@ -36,11 +36,14 @@ def _tsdf_params(args, rec) -> tuple[float | None, int, int]:
     extent/256 + 200k default — unless the individual flags override it.
     """
     voxel, faces, smooth = args.mesh_voxel, args.mesh_faces, args.mesh_smooth
+    dsmooth = getattr(args, "mesh_depth_smooth", 0.0)
     if getattr(args, "mesh_fine", False):
         voxel = voxel or rec.scene_extent() / 384.0
         faces = max(faces, 450_000)
         smooth = max(smooth, 3)
-    return voxel, faces, smooth
+        # NB: depth bilateral (--mesh-depth-smooth) intentionally NOT defaulted —
+        # it warps geometry (wavy surfaces); the median-depth TSDF preserves shape.
+    return voxel, faces, smooth, dsmooth
 
 
 def cmd_reconstruct(args: argparse.Namespace) -> int:
@@ -199,9 +202,9 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
             mesh = poisson_mesh(pcd)
         else:
             log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
-            voxel, faces, smooth = _tsdf_params(args, rec)
-            mesh = fuse_tsdf(model, rec, voxel_length=voxel,
-                             target_faces=faces, smooth_iters=smooth)
+            voxel, faces, smooth, dsmooth = _tsdf_params(args, rec)
+            mesh = fuse_tsdf(model, rec, voxel_length=voxel, target_faces=faces,
+                             smooth_iters=smooth, depth_smooth=dsmooth)
         mesh_path = os.path.join(args.output, "mesh.ply")
         save_mesh(mesh, mesh_path)
         log.info(
@@ -284,9 +287,9 @@ def cmd_mesh(args: argparse.Namespace) -> int:
 
         mesh = poisson_mesh(dense_surface_cloud(model, rec))
     else:
-        voxel, faces, smooth = _tsdf_params(args, rec)
-        mesh = fuse_tsdf(model, rec, voxel_length=voxel,
-                         target_faces=faces, smooth_iters=smooth)
+        voxel, faces, smooth, dsmooth = _tsdf_params(args, rec)
+        mesh = fuse_tsdf(model, rec, voxel_length=voxel, target_faces=faces,
+                         smooth_iters=smooth, depth_smooth=dsmooth)
     path = os.path.join(args.output, args.mesh_out)
     save_mesh(mesh, path)
     log.info("Wrote %s (%d verts, %d tris)", path, len(mesh.vertices), len(mesh.triangles))
@@ -338,7 +341,10 @@ def main(argv: list[str] | None = None) -> int:
                         "since at the default voxel the raw mesh already caps here")
     r.add_argument("--mesh-fine", action="store_true",
                    help="denser-mesh preset: finer voxel (extent/384) + 450k faces + "
-                        "light smoothing (~+25%% surface detail)")
+                        "light smoothing + depth de-jag (~+25%% surface detail)")
+    r.add_argument("--mesh-depth-smooth", type=float, default=0.0, metavar="S",
+                   help="bilateral de-jag of per-view depth before fusion (sigma in "
+                        "scene units, e.g. extent/60); smooths the staircase surface")
     r.add_argument("--mesh-smooth", type=int, default=0, metavar="N",
                    help="N Taubin smoothing passes on the TSDF mesh (denoise the "
                         "marching-cubes staircase, volume-preserving); 0 disables")
@@ -401,7 +407,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Taubin smoothing passes")
     m.add_argument("--mesh-fine", action="store_true",
                    help="denser-mesh preset: finer voxel (extent/384) + 450k faces + "
-                        "light smoothing (~+25%% surface detail)")
+                        "light smoothing + depth de-jag (~+25%% surface detail)")
+    m.add_argument("--mesh-depth-smooth", type=float, default=0.0, metavar="S",
+                   help="bilateral de-jag of per-view depth before fusion (sigma in "
+                        "scene units); smooths the staircase surface")
     m.add_argument("--mesh-out", default="mesh.ply", help="output filename in the dir")
     m.set_defaults(fn=cmd_mesh)
 

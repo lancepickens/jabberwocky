@@ -72,6 +72,8 @@ def fuse_tsdf(
     smooth_iters: int = 0,  # >0: Taubin smoothing passes (denoise, volume-preserving)
     depth_maps=None,
     images=None,
+    mono_blend: float = 0.0,  # combined mode: pull splat depth toward smooth mono depth
+    depth_smooth: float = 0.0,  # >0: edge-preserving (bilateral) smooth of per-view depth
     bg=None,
 ):
     """TSDF-fuse depth+colour from every registered camera → Open3D mesh.
@@ -110,7 +112,23 @@ def fuse_tsdf(
     n = 0
     for i, fi in enumerate(rec.registered):
         R, t = rec.poses[fi]
-        if depth_maps is not None:
+        if depth_maps is not None and model is not None and mono_blend > 0:
+            # Combined: the splat's median depth is complete + metric but jagged
+            # (each pixel's depth is one discrete gaussian's z); the aligned
+            # monocular depth is smooth but sparse. Blend them — union the
+            # coverage, and where both exist pull toward the smooth prior by
+            # ``mono_blend`` — for a mesh that's both complete and smooth.
+            d_splat, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
+            d_mono = depth_maps[i].astype(np.float32)
+            if d_mono.shape[:2] != (rh, rw):
+                d_mono = cv2.resize(d_mono, (rw, rh), interpolation=cv2.INTER_NEAREST)
+            sm, mm = d_splat > 0, d_mono > 0
+            depth = d_splat.copy()
+            both = sm & mm
+            depth[both] = (1.0 - mono_blend) * d_splat[both] + mono_blend * d_mono[both]
+            only_mono = mm & ~sm
+            depth[only_mono] = d_mono[only_mono]
+        elif depth_maps is not None:
             depth = depth_maps[i].astype(np.float32)
             color = images[fi][:, :, ::-1]  # BGR frame -> RGB
             if (depth.shape[0], depth.shape[1]) != (rh, rw):
@@ -119,6 +137,14 @@ def fuse_tsdf(
             color = np.ascontiguousarray(color.astype(np.uint8))
         else:
             depth, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
+        if depth_smooth > 0:
+            # Edge-preserving (bilateral) smoothing of the per-view depth removes
+            # the staircase jaggedness of the discrete median-depth surface while
+            # keeping depth discontinuities (object edges) crisp: the 0-background
+            # is a large depth jump, so it reads as an edge and isn't averaged in.
+            depth = cv2.bilateralFilter(
+                np.ascontiguousarray(depth, np.float32), 7, float(depth_smooth), 5.0
+            )
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(np.ascontiguousarray(color)),
             o3d.geometry.Image(np.ascontiguousarray(depth)),
