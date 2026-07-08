@@ -174,6 +174,13 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
                 None, rec, voxel_length=args.mesh_voxel,
                 depth_maps=depth_maps, images=frames.images,
             )
+        elif args.mesh_method == "poisson":
+            from .mesh import dense_surface_cloud, poisson_mesh
+
+            log.info("Building screened-Poisson mesh from %d gaussians (watertight)",
+                     model.num_gaussians)
+            pcd = dense_surface_cloud(model, rec)
+            mesh = poisson_mesh(pcd)
         else:
             log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
             mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel)
@@ -274,6 +281,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--render-scale", type=float, default=1.0,
                    help="splat features at this fraction of resolution and let "
                         "the shader upsample (e.g. 0.5 = ~4x cheaper; with --neural)")
+    r.add_argument("--mesh-method", choices=["tsdf", "poisson"], default="tsdf",
+                   help="gaussian mesh extraction: 'tsdf' (default) or 'poisson' "
+                        "(screened Poisson from the dense median-depth surface cloud, "
+                        "watertight/hole-filling)")
     r.add_argument("--mesh", action="store_true",
                    help="TSDF-fuse the trained gaussians into mesh.ply "
                         "(requires the 'mesh' extra: uv pip install open3d)")
