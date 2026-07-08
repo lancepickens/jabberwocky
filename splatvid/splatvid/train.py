@@ -186,6 +186,7 @@ def train(
         log.info("Depth supervision: %s depth for %d views", src, len(views))
 
     recent_psnr: list[float] = []
+    n_nonfinite = 0
     for it in range(1, cfg.iterations + 1):
         vi = int(rng.integers(len(views)))
         view = views[vi]
@@ -202,8 +203,10 @@ def train(
             # median depth crisp, so the fused mesh follows the true surface
             # instead of a fuzzy volumetric shell (RaDe-GS / 2DGS insight).
             s_sorted = model.get_scale().sort(dim=-1).values  # smin, smid, smax
+            # Clamp the denominator so the ratio can't blow up as gaussians
+            # flatten (a tiny smid otherwise produces huge gradients → NaN).
             loss = loss + cfg.flatten_weight * (
-                s_sorted[:, 0] / (s_sorted[:, 1] + 1e-8)
+                s_sorted[:, 0] / s_sorted[:, 1].clamp(min=1e-6)
             ).mean()
         if mesh_depths is not None:
             md = mesh_depths[vi]
@@ -214,6 +217,21 @@ def train(
             valid = (md > 0) & (info.alpha > 0.5)
             if bool(valid.any()):
                 loss = loss + cfg.depth_weight * (surf[valid] - md[valid]).abs().mean()
+
+        # NaN/inf guard: a single non-finite loss, left unchecked, backprops NaN
+        # into every parameter and (via the end-of-training transparency prune)
+        # can wipe the whole model. Skip the step instead so one bad iteration
+        # can't destroy a long run.
+        if not torch.isfinite(loss):
+            n_nonfinite += 1
+            if n_nonfinite <= 3 or n_nonfinite % 100 == 0:
+                log.warning(
+                    "Non-finite loss at iter %d; skipping step (%d skipped so far)",
+                    it, n_nonfinite,
+                )
+            opt.zero_grad(set_to_none=True)
+            continue
+
         opt.zero_grad(set_to_none=True)
         loss.backward()
 
@@ -224,6 +242,18 @@ def train(
                 [g[:, 0] * (view.width / 2.0), g[:, 1] * (view.height / 2.0)], dim=-1
             )
             model.accumulate_grads(ndc.norm(dim=-1).detach(), info.visible)
+
+        # Gradients can be non-finite even when the loss is finite (sqrt/division
+        # backward at degenerate gaussians); stepping on them corrupts params.
+        if not all(
+            torch.isfinite(p.grad).all()
+            for p in model.parameters() if p.grad is not None
+        ):
+            n_nonfinite += 1
+            if n_nonfinite <= 3 or n_nonfinite % 100 == 0:
+                log.warning("Non-finite gradient at iter %d; skipping step", it)
+            opt.zero_grad(set_to_none=True)
+            continue
 
         opt.step()
 
