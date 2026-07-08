@@ -33,6 +33,22 @@ def _sharpness(gray: np.ndarray) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+def _exposure_factor(gray: np.ndarray) -> float:
+    """Down-weight blown-out, blacked-out, or flat frames (0.1) vs normal (1.0).
+
+    Over/under-exposed or low-contrast frames yield few reliable keypoints, so
+    the learned matcher finds few matches (a 0-match pair was observed), which
+    strands frames in SfM and seeds floaters. Folding this into the per-window
+    selection score prefers a well-exposed frame without hard-dropping any
+    window (which would risk disconnecting the view graph).
+    """
+    m = float(gray.mean())
+    s = float(gray.std())
+    if m > 240.0 or m < 15.0 or s < 10.0:
+        return 0.1
+    return 1.0
+
+
 def _resize_max_dim(img: np.ndarray, max_dim: int) -> np.ndarray:
     h, w = img.shape[:2]
     scale = max_dim / max(h, w)
@@ -121,7 +137,7 @@ def extract_frames(
                 continue
             small = _resize_max_dim(frame, max_dim)
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            score = _sharpness(gray)
+            score = _sharpness(gray) * _exposure_factor(gray)
             if score > best_score:
                 best, best_idx, best_score = small, int(pi), score
         if best is not None:
