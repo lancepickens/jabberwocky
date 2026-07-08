@@ -63,11 +63,16 @@ def project_gaussians(
     cx: float,
     cy: float,
     near: float = 0.05,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return_amp: bool = False,
+) -> tuple:
     """Project 3D gaussians into screen space.
 
     Returns (means2d (N,2), cov2d (N,2,2), depth (N,), in_front (N,) bool).
-    Culled gaussians keep placeholder values; use the mask.
+    With ``return_amp`` also returns a 5th value: the Mip-Splatting amplitude
+    factor (N,) — the low-pass dilation inflates each splat's 2D footprint, so
+    to conserve *energy* (not peak) the opacity is scaled by
+    ``sqrt(det(cov)/det(cov+dilation))``. Applying it de-blurs vs the naive
+    dilation. Off by default so existing callers/behavior are unchanged.
     """
     p_cam = xyz @ R.T + t[None]
     z = p_cam[:, 2]
@@ -90,7 +95,13 @@ def project_gaussians(
     JW = J @ R[None]
     cov2d = JW @ cov3d @ JW.transpose(1, 2)
     # Low-pass dilation: every splat covers at least ~a pixel (antialias).
+    if return_amp:
+        det0 = (cov2d[:, 0, 0] * cov2d[:, 1, 1] - cov2d[:, 0, 1] ** 2).clamp(min=0.0)
     cov2d = cov2d + 0.3 * torch.eye(2, device=xyz.device, dtype=xyz.dtype)[None]
+    if return_amp:
+        det1 = (cov2d[:, 0, 0] * cov2d[:, 1, 1] - cov2d[:, 0, 1] ** 2).clamp(min=1e-12)
+        amp = torch.sqrt((det0 / det1).clamp(0.0, 1.0))  # energy-preserving, <=1
+        return means2d, cov2d, z, in_front, amp
     return means2d, cov2d, z, in_front
 
 
@@ -110,6 +121,7 @@ def render(
     bg: torch.Tensor | None = None,
     max_per_tile: int = 4096,
     return_aux: bool = False,
+    mip: bool = False,
 ) -> tuple[torch.Tensor, RenderInfo]:
     """Render one view. Returns (image (H, W, C), RenderInfo).
 
@@ -125,9 +137,16 @@ def render(
     n = xyz.shape[0]
 
     cov3d = compute_cov3d(scale, quat)
-    means2d, cov2d, depth, in_front = project_gaussians(
-        xyz, cov3d, R, t, focal, cx, cy
-    )
+    if mip:
+        means2d, cov2d, depth, in_front, amp = project_gaussians(
+            xyz, cov3d, R, t, focal, cx, cy, return_amp=True
+        )
+        op = opacity[:, 0] * amp  # Mip: energy-preserving opacity (de-blur)
+    else:
+        means2d, cov2d, depth, in_front = project_gaussians(
+            xyz, cov3d, R, t, focal, cx, cy
+        )
+        op = opacity[:, 0]
     if means2d.requires_grad:
         means2d.retain_grad()
 
@@ -147,7 +166,7 @@ def render(
         in_front
         & (u + radii > 0) & (u - radii < width)
         & (v + radii > 0) & (v - radii < height)
-        & (opacity[:, 0] > 1.0 / 255.0)
+        & (op > 1.0 / 255.0)
     )
 
     # Start from the background; covered tiles overwrite their region.
@@ -174,7 +193,7 @@ def render(
     g_v = v[sel]
     g_conic = conic[sel]
     g_rgb = rgb[sel]
-    g_op = opacity[sel, 0]
+    g_op = op[sel]
     g_rad = radii[sel].detach()
     # Keep depth differentiable (grad flows to xyz) so it can be supervised
     # against a mesh; only computed when return_aux.

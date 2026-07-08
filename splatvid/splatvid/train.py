@@ -41,6 +41,7 @@ class TrainConfig:
     prune_far_factor: float = 0.0  # >0: prune gaussians beyond factor*point-cloud radius
     flatten_weight: float = 0.0  # >0: flatten gaussians into surface disks (better mesh depth)
     appearance: bool = False  # per-view gain/bias to absorb exposure/WB drift (handheld video)
+    antialias: bool = False  # Mip-Splatting energy-preserving dilation (sharper splat)
     max_per_tile: int = 1024
     log_every: int = 50
     seed: int = 0
@@ -207,7 +208,7 @@ def train(
         pred, info = render_model(
             model, view.R, view.t, view.focal, view.cx, view.cy,
             view.width, view.height, bg=bg, max_per_tile=cfg.max_per_tile,
-            return_aux=(mesh_depths is not None),
+            return_aux=(mesh_depths is not None), mip=cfg.antialias,
         )
         if cfg.appearance:
             # Map the render through this view's exposure/WB before comparing,
