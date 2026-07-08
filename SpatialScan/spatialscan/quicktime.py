@@ -160,11 +160,15 @@ def extract_spatial_metadata(buf: bytes) -> SpatialMetadata:
     if root.find("lhvC") or root.find("hvcE") or vexu is not None:
         meta.is_mv_hevc = True
 
-    scope = vexu if vexu is not None else root
+    # blin lives in vexu>eyes>cams; hfov is a sibling of vexu in the sample
+    # entry. Search the vexu subtree first, then the whole file — these
+    # fourccs are rare, and the sanity clamps below reject false positives.
+    scopes = [s for s in (vexu, root) if s is not None]
 
-    blin = scope.find("blin")
+    blin = _first(scopes, "blin")
     if blin is not None:
-        # micrometres, big-endian; some writers prepend a version/flags word.
+        # baseline, big-endian; a leading version/flags word is optional, and
+        # some writers store it 64-bit, so probe a few offsets.
         for off in (0, 4):
             micro = _read_u32(blin.data, off)
             if micro and 500 <= micro <= 500_000:  # 0.5mm .. 500mm sane range
@@ -172,7 +176,7 @@ def extract_spatial_metadata(buf: bytes) -> SpatialMetadata:
                 meta.source_boxes.append("blin")
                 break
 
-    hfov = scope.find("hfov") or scope.find("dfov")
+    hfov = _first(scopes, "hfov") or _first(scopes, "dfov")
     if hfov is not None:
         for off in (0, 4):
             milli = _read_u32(hfov.data, off)
@@ -181,15 +185,25 @@ def extract_spatial_metadata(buf: bytes) -> SpatialMetadata:
                 meta.source_boxes.append(hfov.fourcc)
                 break
 
-    stri = scope.find("stri")
+    stri = _first(scopes, "stri")
     if stri is not None and stri.data:
-        # FullBox: 4 bytes version/flags, then a flags byte (bit0 reversed,
-        # bit1 has_left, bit2 has_right) per Apple's stereo-view information.
+        # StereoViewInformationBox (ISO/IEC 14496-12): a FullBox (4-byte
+        # version/flags) then one flags byte, low bits: has_left(0x01),
+        # has_right(0x02), has_additional(0x04), eye_views_reversed(0x08).
         flags = stri.data[4] if len(stri.data) > 4 else stri.data[-1]
-        meta.eyes_reversed = bool(flags & 0x1)
-        if flags & 0x6:  # at least one eye-presence bit set
-            meta.has_left_eye = bool(flags & 0x2)
-            meta.has_right_eye = bool(flags & 0x4)
+        if flags & 0x03:  # at least one eye-presence bit set
+            meta.has_left_eye = bool(flags & 0x01)
+            meta.has_right_eye = bool(flags & 0x02)
+        meta.eyes_reversed = bool(flags & 0x08)
         meta.source_boxes.append("stri")
 
     return meta
+
+
+def _first(scopes, fourcc: str) -> "Atom | None":
+    """First match for ``fourcc`` across the given scopes, in order."""
+    for s in scopes:
+        hit = s.find(fourcc)
+        if hit is not None:
+            return hit
+    return None
