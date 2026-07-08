@@ -183,7 +183,8 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
             mesh = poisson_mesh(pcd)
         else:
             log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
-            mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel)
+            mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel,
+                             smooth_iters=args.mesh_smooth)
         mesh_path = os.path.join(args.output, "mesh.ply")
         save_mesh(mesh, mesh_path)
         log.info(
@@ -281,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--render-scale", type=float, default=1.0,
                    help="splat features at this fraction of resolution and let "
                         "the shader upsample (e.g. 0.5 = ~4x cheaper; with --neural)")
+    r.add_argument("--mesh-smooth", type=int, default=0, metavar="N",
+                   help="N Taubin smoothing passes on the TSDF mesh (denoise the "
+                        "marching-cubes staircase, volume-preserving); 0 disables")
     r.add_argument("--mesh-method", choices=["tsdf", "poisson"], default="tsdf",
                    help="gaussian mesh extraction: 'tsdf' (default) or 'poisson' "
                         "(screened Poisson from the dense median-depth surface cloud, "
