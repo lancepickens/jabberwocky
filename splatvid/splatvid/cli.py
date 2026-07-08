@@ -184,7 +184,7 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
         else:
             log.info("Building TSDF mesh from %d gaussians", model.num_gaussians)
             mesh = fuse_tsdf(model, rec, voxel_length=args.mesh_voxel,
-                             smooth_iters=args.mesh_smooth)
+                             target_faces=args.mesh_faces, smooth_iters=args.mesh_smooth)
         mesh_path = os.path.join(args.output, "mesh.ply")
         save_mesh(mesh, mesh_path)
         log.info(
@@ -282,6 +282,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--render-scale", type=float, default=1.0,
                    help="splat features at this fraction of resolution and let "
                         "the shader upsample (e.g. 0.5 = ~4x cheaper; with --neural)")
+    r.add_argument("--mesh-faces", type=int, default=200_000, metavar="N",
+                   help="target triangle count for the TSDF mesh (default 200k); "
+                        "raise for a denser mesh — pair with a finer --mesh-voxel, "
+                        "since at the default voxel the raw mesh already caps here")
     r.add_argument("--mesh-smooth", type=int, default=0, metavar="N",
                    help="N Taubin smoothing passes on the TSDF mesh (denoise the "
                         "marching-cubes staircase, volume-preserving); 0 disables")
