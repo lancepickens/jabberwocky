@@ -107,6 +107,20 @@ def test_fuse_from_depth_maps():
     assert len(mesh.triangles) > 50
 
 
+def test_backproject_views_lands_on_surface():
+    # Median-depth backprojection puts points on the true scene surface (no Open3D).
+    from splatvid.mesh import backproject_views
+
+    model, xyz, rgb = _opaque_model_from_scene(n=1200)
+    rec = _orbit_reconstruction(xyz, rgb, n_cam=10, w=96, h=72)
+    pts, cols = backproject_views(model, rec, max_render_dim=96)
+    assert len(pts) > 1000 and cols.min() >= 0 and cols.max() <= 1
+    from scipy.spatial import cKDTree
+
+    d, _ = cKDTree(xyz).query(pts)
+    assert np.median(d) < 0.05 * rec.scene_extent()  # on the surface
+
+
 def test_poisson_mesh_reconstructs_sphere():
     # Screened Poisson on a clean oriented point cloud recovers the surface.
     pytest.importorskip("open3d")

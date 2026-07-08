@@ -158,6 +158,74 @@ def fuse_tsdf(
     return mesh
 
 
+def backproject_views(
+    model,
+    rec,
+    *,
+    max_render_dim: int = 480,
+    alpha_thresh: float = 0.5,
+    bg=None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fuse per-view median-depth renders into a world-space coloured point cloud.
+
+    For every registered camera, render the splat's median (surface) depth +
+    colour, keep confidently-covered pixels (``alpha >= alpha_thresh``), and
+    unproject them to world coordinates. Pure NumPy output (points, colours) —
+    the dense, on-surface, multi-view cloud that screened Poisson wants (unlike
+    the noisy vertices of an already-fused TSDF mesh). Returns ``(pts (M,3),
+    colors (M,3) in [0,1])``.
+    """
+    s = min(1.0, max_render_dim / max(rec.width, rec.height))
+    rw, rh = max(1, round(rec.width * s)), max(1, round(rec.height * s))
+    rf, rcx, rcy = rec.focal * s, rec.cx * s, rec.cy * s
+    pts_all, col_all = [], []
+    for fi in rec.registered:
+        R, t = rec.poses[fi]
+        depth, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
+        ys, xs = np.nonzero(depth > 0)
+        if ys.size == 0:
+            continue
+        z = depth[ys, xs].astype(np.float64)
+        x = (xs + 0.5 - rcx) / rf * z
+        y = (ys + 0.5 - rcy) / rf * z
+        cam = np.stack([x, y, z], axis=1)  # camera-space points
+        R64 = np.asarray(R, np.float64)
+        t64 = np.asarray(t, np.float64).ravel()
+        world = (cam - t64[None]) @ R64  # p_world = R^T (p_cam - t)
+        pts_all.append(world)
+        col_all.append(color[ys, xs].astype(np.float64) / 255.0)
+    if not pts_all:
+        return np.zeros((0, 3)), np.zeros((0, 3))
+    return np.concatenate(pts_all), np.concatenate(col_all)
+
+
+def dense_surface_cloud(
+    model,
+    rec,
+    *,
+    max_render_dim: int = 480,
+    voxel_downsample: int = 400_000,
+    bg=None,
+):
+    """Oriented Open3D point cloud of the splat surface (input for ``poisson_mesh``).
+
+    Backprojects median depth from every view (``backproject_views``), voxel-
+    downsamples, and estimates consistently-oriented normals — everything
+    screened Poisson needs for a watertight, hole-filled mesh.
+    """
+    o3d = _import_o3d()
+    pts, cols = backproject_views(model, rec, max_render_dim=max_render_dim, bg=bg)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.ascontiguousarray(pts))
+    pcd.colors = o3d.utility.Vector3dVector(np.ascontiguousarray(cols))
+    if voxel_downsample and len(pts) > voxel_downsample:
+        pcd = pcd.random_down_sample(voxel_downsample / len(pts))
+    ext = rec.scene_extent()
+    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=ext / 50, max_nn=30))
+    pcd.orient_normals_consistent_tangent_plane(30)
+    return pcd
+
+
 def poisson_mesh(
     source,
     *,
