@@ -80,23 +80,46 @@ splatting), each grounded in the actual code, converged on the same root causes:
   and deferred: this machine is **MPS-only**, and those need CUDA. DISK+LightGlue is
   the SOTA path that actually runs here.
 
-## In flight / next steps (tracked by the 30-min improvement loop)
+## Follow-up work (done since the initial report)
 
-- Full improved run in `out_sota/` (new SfM → flatten-trained splat → median-depth
-  mesh). _Note: the pure-Python rasterizer is slow at high resolution (~8.5 s/iter
-  at 512 px), so runs use 320 px; a rasterizer speedup is the main lever for
-  higher-res training._
-- Build a dense oriented cloud from the splat's median depth → give Poisson a fair
-  comparison against TSDF.
-- Splatting-track items not yet done: Mip-Splatting anti-aliasing (amplitude
-  compensation), 3DGS-MCMC densification, per-image appearance embeddings,
-  normal-consistency regularization.
+- **Rasterizer ~3.6× faster** (32 px tiles + higher per-tile cap) — *and* more
+  accurate (the old cap silently dropped gaussians). Lifted the resolution ceiling.
+- **NaN/inf training guards** — a run had collapsed to 4 gaussians when a single
+  NaN backpropped into every parameter; guards now skip such steps.
+- **`mesh` subcommand + dense-mesh controls** — `splatvid mesh <dir>` rebuilds the
+  mesh from an existing splat with **no retrain**; `--mesh-fine` (finer voxel +
+  450k faces) gives ~+25 % surface detail; also `--mesh-faces`, `--mesh-voxel`,
+  `--mesh-smooth`, `--mesh-method {tsdf,poisson}`.
+- **Dense-frame matching made tractable** (three compounding speedups): density-aware
+  candidate-pair count, per-frame tensor caching, and a **frame-density-aware
+  keypoint cap** (LightGlue is ~O(kpts²)/pair). A ~50 %-of-video run dropped from
+  >87 min of matching (unfinished) to ~25 min.
+- **`render_mesh(shade=True)`** — flat shading so mesh *relief* is visible for
+  geometry judgement.
+
+## Findings (including negatives — don't re-try)
+
+- **`--flatten` is unstable** (drove scales to degenerate covariance → NaN). Off by
+  default; not recommended. Median-depth + a good SfM carry the mesh.
+- **Monocular depth supervision hurts the splat** (affine-ambiguous, multi-view
+  inconsistent); keep depth for *mesh fusion* only.
+- **Appearance embeddings (`--appearance`) gave no measurable benefit** on this
+  stable-exposure clip (floaters 1.3 % vs 1.2 %). Opt-in; useful only for clips with
+  real exposure drift.
+- **The median-TSDF surface's bumpiness is view-count-limited, not fixable in
+  post.** Bilateral warps, mono-blend distorts, Poisson-from-depth flattens, Taubin
+  and cluster-cleanup don't touch it. The fix is **more views** (denser TSDF
+  averaging → smoother *and* more complete together) — hence dense-frame runs.
 
 ## How to run
 
 ```bash
-uv run splatvid reconstruct video.mov -o out --flatten 0.1 --mesh --floater-fix --device mps
+# reliable dense-mesh reconstruction (guards on, geometry-faithful surface):
+uv run splatvid reconstruct video.mov -o out --mesh --mesh-fine --floater-fix --device mps
+
+# re-mesh an existing result with different settings, no retrain:
+uv run splatvid mesh out --mesh-fine
 ```
 
-`--flatten 0.1` enables surface-disk regularization; `--mesh` fuses the median-depth
-TSDF surface. See `docs/structure-from-motion.md` for the SfM stage details.
+`--mesh --mesh-fine` fuses a dense median-depth TSDF surface. Do **not** use
+`--flatten` (unstable). See `docs/structure-from-motion.md` for the SfM stage.
