@@ -165,38 +165,60 @@ def backproject_views(
     max_render_dim: int = 480,
     alpha_thresh: float = 0.5,
     bg=None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fuse per-view median-depth renders into a world-space coloured point cloud.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Fuse per-view median-depth renders into a world-space oriented point cloud.
 
     For every registered camera, render the splat's median (surface) depth +
-    colour, keep confidently-covered pixels (``alpha >= alpha_thresh``), and
-    unproject them to world coordinates. Pure NumPy output (points, colours) —
-    the dense, on-surface, multi-view cloud that screened Poisson wants (unlike
-    the noisy vertices of an already-fused TSDF mesh). Returns ``(pts (M,3),
-    colors (M,3) in [0,1])``.
+    colour, unproject covered pixels to world coordinates, and compute a
+    per-pixel **normal directly from the depth map** (cross product of
+    backprojected neighbours, oriented toward the camera, rotated to world).
+    Depth-derived normals are accurate and correctly oriented — far better for
+    screened Poisson than post-hoc KNN normals. Pure NumPy. Returns
+    ``(pts (M,3), colors (M,3) in [0,1], normals (M,3))``.
     """
     s = min(1.0, max_render_dim / max(rec.width, rec.height))
     rw, rh = max(1, round(rec.width * s)), max(1, round(rec.height * s))
     rf, rcx, rcy = rec.focal * s, rec.cx * s, rec.cy * s
-    pts_all, col_all = [], []
+    us = (np.arange(rw) + 0.5 - rcx) / rf
+    vs = (np.arange(rh) + 0.5 - rcy) / rf
+    uu, vv = np.meshgrid(us, vs)  # (H, W)
+    pts_all, col_all, nrm_all = [], [], []
     for fi in rec.registered:
         R, t = rec.poses[fi]
         depth, color = render_depth_color(model, R, t, rf, rcx, rcy, rw, rh, bg=bg)
-        ys, xs = np.nonzero(depth > 0)
-        if ys.size == 0:
+        valid = depth > 0
+        if not valid.any():
             continue
-        z = depth[ys, xs].astype(np.float64)
-        x = (xs + 0.5 - rcx) / rf * z
-        y = (ys + 0.5 - rcy) / rf * z
-        cam = np.stack([x, y, z], axis=1)  # camera-space points
+        d = depth.astype(np.float64)
+        Pcam = np.stack([uu * d, vv * d, d], axis=-1)  # (H, W, 3) camera-space
+        # Normal from central differences of the camera-space point map.
+        dPdu = np.zeros_like(Pcam)
+        dPdv = np.zeros_like(Pcam)
+        dPdu[:, 1:-1, :] = Pcam[:, 2:, :] - Pcam[:, :-2, :]
+        dPdv[1:-1, :, :] = Pcam[2:, :, :] - Pcam[:-2, :, :]
+        n = np.cross(dPdu, dPdv)
+        nn = np.linalg.norm(n, axis=-1, keepdims=True)
+        n = n / np.where(nn > 0, nn, 1.0)
+        n[n[..., 2] > 0] *= -1.0  # orient toward the camera (camera looks +z)
+        # Require the pixel and its 4 neighbours to have depth so the normal
+        # doesn't span a depth discontinuity (a hole edge).
+        nbr = (
+            valid
+            & np.roll(valid, 1, 1) & np.roll(valid, -1, 1)
+            & np.roll(valid, 1, 0) & np.roll(valid, -1, 0)
+        )
+        nbr[0, :] = nbr[-1, :] = nbr[:, 0] = nbr[:, -1] = False
+        ys, xs = np.nonzero(nbr)
         R64 = np.asarray(R, np.float64)
         t64 = np.asarray(t, np.float64).ravel()
-        world = (cam - t64[None]) @ R64  # p_world = R^T (p_cam - t)
+        world = (Pcam[ys, xs] - t64[None]) @ R64  # p_world = R^T (p_cam - t)
+        world_n = n[ys, xs] @ R64  # normals rotate the same way
         pts_all.append(world)
         col_all.append(color[ys, xs].astype(np.float64) / 255.0)
+        nrm_all.append(world_n)
     if not pts_all:
-        return np.zeros((0, 3)), np.zeros((0, 3))
-    return np.concatenate(pts_all), np.concatenate(col_all)
+        return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3))
+    return np.concatenate(pts_all), np.concatenate(col_all), np.concatenate(nrm_all)
 
 
 def dense_surface_cloud(
@@ -214,15 +236,13 @@ def dense_surface_cloud(
     screened Poisson needs for a watertight, hole-filled mesh.
     """
     o3d = _import_o3d()
-    pts, cols = backproject_views(model, rec, max_render_dim=max_render_dim, bg=bg)
+    pts, cols, normals = backproject_views(model, rec, max_render_dim=max_render_dim, bg=bg)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(np.ascontiguousarray(pts))
     pcd.colors = o3d.utility.Vector3dVector(np.ascontiguousarray(cols))
+    pcd.normals = o3d.utility.Vector3dVector(np.ascontiguousarray(normals))
     if voxel_downsample and len(pts) > voxel_downsample:
         pcd = pcd.random_down_sample(voxel_downsample / len(pts))
-    ext = rec.scene_extent()
-    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=ext / 50, max_nn=30))
-    pcd.orient_normals_consistent_tangent_plane(30)
     return pcd
 
 

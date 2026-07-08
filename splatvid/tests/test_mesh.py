@@ -113,12 +113,17 @@ def test_backproject_views_lands_on_surface():
 
     model, xyz, rgb = _opaque_model_from_scene(n=1200)
     rec = _orbit_reconstruction(xyz, rgb, n_cam=10, w=96, h=72)
-    pts, cols = backproject_views(model, rec, max_render_dim=96)
+    pts, cols, normals = backproject_views(model, rec, max_render_dim=96)
     assert len(pts) > 1000 and cols.min() >= 0 and cols.max() <= 1
     from scipy.spatial import cKDTree
 
     d, _ = cKDTree(xyz).query(pts)
     assert np.median(d) < 0.05 * rec.scene_extent()  # on the surface
+    # Normals are unit-length and, for a scene centred near the origin, mostly
+    # point outward (away from the centroid).
+    assert np.allclose(np.linalg.norm(normals, axis=1), 1.0, atol=1e-3)
+    outward = (normals * (pts - xyz.mean(0))).sum(1) > 0
+    assert outward.mean() > 0.6  # mostly outward (scene isn't perfectly convex)
 
 
 def test_poisson_mesh_reconstructs_sphere():
