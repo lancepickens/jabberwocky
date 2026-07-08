@@ -473,7 +473,18 @@ def run_sfm(
     cx, cy = w / 2.0, h / 2.0
     state = _State(K=make_K(focal0, cx, cy), focal=focal0, cx=cx, cy=cy)
 
-    features = detect_features(images, n_features=n_features)
+    # Dense captures don't need thousands of keypoints per frame — more VIEWS
+    # carry the information, and LightGlue's cost is ~O(kpts^2) per pair, so a
+    # dense run at full keypoints spends enormous time matching. Cap keypoints
+    # down with frame count (floored) so ~50%-of-video runs stay tractable.
+    n = len(images)
+    eff_features = min(n_features, max(1536, round(n_features * 150.0 / n))) if n > 150 else n_features
+    if eff_features < n_features:
+        log.info(
+            "Dense capture (%d frames): capping keypoints %d -> %d for tractable matching",
+            n, n_features, eff_features,
+        )
+    features = detect_features(images, n_features=eff_features)
     pair_matches = match_frames(features, window=match_window)
     if not pair_matches:
         raise SfMError("No verifiable frame pairs found; is the video textured and moving?")
