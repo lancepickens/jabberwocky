@@ -9,7 +9,8 @@ SCENES = [
     ("out_img6547/scene.splat", "Short", "old SfM · 800 iters"),
     ("out_neural_hq/scene.splat", "Neural-geom", "old SfM · 1000 iters"),
     ("out_img6547_hq/scene.splat", "High", "old SfM · 2000 iters"),
-    ("out_sota/scene.splat", "SOTA ★", "DISK+LightGlue SfM · 1800 iters"),
+    ("out_sota/scene.splat", "SOTA-40", "DISK+LightGlue SfM · 40 frames"),
+    ("out_sota418/scene.splat", "SOTA-418 ★", "DISK+LightGlue SfM · 418 frames"),
 ]
 
 data = []
@@ -31,9 +32,9 @@ import numpy as np, open3d as o3d
 
 MESHES = [
     ("out_img6547_hq/mesh.ply", "TSDF-HQ (old)", "old SfM · mean depth", "old"),
-    ("out_img6547_hq/mesh_mono.ply", "Depth-prior (old)", "old SfM · mono depth", "old"),
-    ("out_sota/mesh_fine_smooth.ply", "SOTA-Fine ★", "new SfM · median · --mesh-fine", "new"),
-    ("out_sota/mesh_poisson.ply", "SOTA-Poisson", "dense-cloud screened Poisson", "new"),
+    ("out_sota/mesh.ply", "SOTA-40", "new SfM · 40 frames · median", "40f"),
+    ("out_sota418/mesh.ply", "SOTA-418 ★", "new SfM · 418 frames (~50%) · median", "418f"),
+    ("out_sota/mesh_poisson.ply", "SOTA-Poisson", "40 frames · dense-cloud Poisson", "40f"),
 ]
 TARGET_FACES = 150_000
 
@@ -418,10 +419,10 @@ HTML = STYLE + f"""
 </section>
 
 <section>
-  <div class="sec-head"><span class="n">02</span><h2>Surface meshes — old vs new-SfM median-depth &amp; Poisson</h2></div>
-  <p class="lead">Flat-shaded so geometry, not texture, is what you judge. <b>TSDF-HQ</b> / <b>Depth-prior</b> are the old-SfM meshes. <b>SOTA-Fine ★</b> is the new pipeline's best dense mesh — new SfM, <em>median</em> depth (the true front surface, not the opacity-weighted mean), finer voxel + 450k faces via <code>--mesh-fine</code>; <b>SOTA-Poisson</b> runs screened Poisson on the dense median-depth surface cloud. Rendered at ~150k faces for the web (native counts labeled).</p>
+  <div class="sec-head"><span class="n">02</span><h2>Surface meshes — the frame-count story (40 → 418)</h2></div>
+  <p class="lead">Flat-shaded so geometry, not texture, is what you judge. <b>TSDF-HQ</b> is the old-SfM mesh. <b>SOTA-40</b> and <b>SOTA-418 ★</b> use the same new pipeline (DISK+LightGlue SfM → median-depth TSDF) — the only difference is <b>40 vs 418 frames</b> (~50% of the video). <b>SOTA-Poisson</b> is the depth-cloud Poisson variant. Rendered at ~150k faces for the web.</p>
   <div class="grid" id="grid-mesh"></div>
-  <div class="callout"><b>The result →</b> <b>SOTA-Fine ★</b> is the clear winner — the cooler is a clean, recognizable solid (lid, body, strap) where the old meshes were fragmented noise. <b>SOTA-Poisson</b> fills more holes (92% vs 65% coverage from one view) but over-smooths and adds balloon artifacts, so median-depth TSDF keeps the crisp detail. The lift comes from the rewritten SfM (DISK+LightGlue, 40/40 cams, 0.61px) + median-depth fusion + the finer voxel.</div>
+  <div class="callout"><b>The result →</b> <b>SOTA-418 ★</b> is the winner and the key finding: the surface's bumpiness and its holes had the <em>same</em> cause — <b>too few views</b> (40 under-samples the TSDF depth averaging). Post-processing (bilateral, Poisson, Taubin, cleanup) all failed to fix it. Going to <b>418 views</b> fixed <em>both at once</em> — smoother surface <em>and</em> more complete (mean view-coverage 82.7% → 90.0%), with no post-processing. Made practical only by the dense-frame matching speedups (density-aware pairs + keypoint cap).</div>
 </section>
 
 <footer>splatvid · IMG_6547 · 5 splat runs + 4 meshes · self-contained, no network</footer>
