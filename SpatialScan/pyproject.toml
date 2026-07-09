@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spatialscan"
+version = "0.1.0"
+description = "Reconstruct a metric scene mesh from an Apple spatial video (MV-HEVC stereo) — parse the format, stereo-match to metric depth, fuse RGB-D frames into a surface."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python-headless>=4.8",  # StereoSGBM disparity + image I/O
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+mesh = ["open3d>=0.17"]  # RGB-D odometry + ScalableTSDFVolume surface extraction
+mvhevc = ["av>=12.0"]  # PyAV bundles a modern ffmpeg that decodes both MV-HEVC views
+
+[project.scripts]
+spatialscan = "spatialscan.cli:main"
+
+[tool.setuptools]
+packages = ["spatialscan"]
