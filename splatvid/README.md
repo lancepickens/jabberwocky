@@ -21,7 +21,15 @@ prebuilt splatting kernels:
    depth-sorted per-tile front-to-back alpha compositing), trained with
    L1 + SSIM loss, with gradient-driven densification (clone/split) and
    opacity pruning, seeded from the SfM point cloud.
-4. **Export + viewer** (`splatvid/export.py`, `viewer.html`) — writes the
+4. **Repair (optional)** (`splatvid/artifix.py`) — an ArtiFixer-style
+   post-pass (NVIDIA, SIGGRAPH 2026) for messy or incomplete captures:
+   novel views along an extended orbit expose floaters (pruned via a
+   depth-consistency vote, verified against the captured views before
+   anything is deleted) and holes (filled with multi-view-verified content
+   and seeded with new gaussians), then the model is fine-tuned on the
+   repaired views. `--artifix`, or `splatvid artifix out/` for an existing
+   scene. See [docs/artifix.md](docs/artifix.md).
+5. **Export + viewer** (`splatvid/export.py`, `viewer.html`) — writes the
    de-facto standard 3DGS `.ply` (loads in SuperSplat & friends) and the
    compact 32-byte `.splat` format, plus a self-contained WebGL2 viewer
    (instanced quads, counting-sort back-to-front blending) with orbit /
@@ -53,6 +61,9 @@ uv run splatvid reconstruct my_video.mp4 -o out/
 
 # Open the interactive viewer (serves out/ on localhost:8000)
 uv run splatvid view out/
+
+# Repair an existing reconstruction (floaters, holes) without redoing SfM
+uv run splatvid artifix out/ --video my_video.mp4
 ```
 
 Output directory contents:
@@ -73,6 +84,9 @@ Useful knobs (see `splatvid reconstruct --help`):
 - `--turntable` also renders an orbit video of the reconstruction.
 - `--resume` reuses a previous run's `cameras.npz` and skips straight to
   training — handy for re-training at higher quality without redoing SfM.
+- `--artifix` runs the repair pass after training (floater removal +
+  hole filling from novel viewpoints; `--artifix-views`,
+  `--artifix-iters` tune it — see [docs/artifix.md](docs/artifix.md)).
 
 ## What kind of video works
 
@@ -140,9 +154,10 @@ splatvid/
   render.py     differentiable tile rasterizer (pure PyTorch)
   losses.py     L1 + SSIM
   train.py      optimization loop, turntable rendering
+  artifix.py    ArtiFixer-style repair: floater prune + hole fill + finetune
   export.py     .ply / .splat writers
   viewer.html   self-contained WebGL2 splat viewer
-  cli.py        `splatvid reconstruct` / `splatvid view`
+  cli.py        `splatvid reconstruct` / `artifix` / `view`
   synthetic.py  procedural scene + video generator (tests/demo)
 ```
 
