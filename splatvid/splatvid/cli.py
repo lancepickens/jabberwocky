@@ -132,6 +132,24 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
             round(rec.width * s), round(rec.height * s),
         )
 
+    def _run_artifix(model, images):
+        from .artifix import ArtifixConfig, artifix
+
+        acfg = ArtifixConfig(
+            n_novel=args.artifix_views,
+            finetune_iters=args.artifix_iters,
+            train_size=args.train_size,
+            device=args.device,
+        )
+        rep = artifix(model, rec, images=images, cfg=acfg)
+        log.info(
+            "Artifix report: %d floaters pruned, %d hole seeds, coverage "
+            "%.2f -> %.2f, anchor PSNR %.2f -> %.2f dB",
+            rep["floaters_pruned"], rep["hole_seeds"],
+            rep["coverage_before"], rep["coverage_after"],
+            rep["anchor_psnr_before"], rep["anchor_psnr_after"],
+        )
+
     shader = None
     if args.neural:
         import torch
@@ -153,8 +171,16 @@ def cmd_reconstruct(args: argparse.Namespace) -> int:
             os.path.join(args.output, "neural.pt"),
         )
         log.info("Saved neural bundle (shader + features) -> neural.pt")
+        if args.artifix:
+            log.warning(
+                "--artifix is not supported together with --neural yet "
+                "(the shader is trained against the pre-repair geometry); skipping"
+            )
     else:
         model = train(rec, frames.images, cfg, depth_targets=depth_maps)
+        if args.artifix:
+            log.info("[3b/4] Artifix: repairing artifacts + filling holes")
+            _run_artifix(model, frames.images)
 
     log.info("[4/4] Exporting")
     save_ply(model, os.path.join(args.output, "scene.ply"))
@@ -297,6 +323,72 @@ def cmd_mesh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifix(args: argparse.Namespace) -> int:
+    """Repair an already-exported scene: prune floaters, fill holes, re-export.
+
+    ArtiFixer-style post-pass (see ``artifix.py``) over ``scene.splat`` +
+    ``cameras.npz`` from a reconstruct output dir. With ``--video`` the
+    original frames anchor the fine-tune (best); without it the model's own
+    captured-pose renders anchor instead — holes still fill, but captured
+    views can't get sharper than they already are.
+    """
+    from .artifix import ArtifixConfig, artifix
+    from .export import model_from_splat, save_ply, save_splat
+    from .sfm import load_reconstruction
+
+    splat = os.path.join(args.output, "scene.splat")
+    cams = os.path.join(args.output, "cameras.npz")
+    if not (os.path.exists(splat) and os.path.exists(cams)):
+        log.error("need %s and %s — run `splatvid reconstruct` first", splat, cams)
+        return 2
+    model = model_from_splat(splat, device=args.device)
+    rec = load_reconstruction(cams)
+
+    images = None
+    if args.video:
+        from .video import extract_frames
+
+        # Frame indices in cameras.npz refer to the extracted-frame order, so
+        # extraction must match the original run's --max-frames/--frame-size.
+        frames = extract_frames(
+            args.video, max_frames=args.max_frames, max_dim=args.frame_size
+        )
+        images = frames.images
+        if max(rec.registered) >= len(images):
+            log.error(
+                "cameras.npz refers to frame %d but only %d frames extracted — "
+                "pass the original video with the original --max-frames/--frame-size",
+                max(rec.registered), len(images),
+            )
+            return 2
+
+    cfg = ArtifixConfig(
+        n_novel=args.views,
+        finetune_iters=args.iterations,
+        train_size=args.train_size,
+        device=args.device,
+    )
+    rep = artifix(model, rec, images=images, cfg=cfg)
+    log.info(
+        "Artifix report: %d floaters pruned, %d hole seeds, coverage "
+        "%.2f -> %.2f, anchor PSNR %.2f -> %.2f dB",
+        rep["floaters_pruned"], rep["hole_seeds"],
+        rep["coverage_before"], rep["coverage_after"],
+        rep["anchor_psnr_before"], rep["anchor_psnr_after"],
+    )
+
+    save_ply(model, os.path.join(args.output, "scene.ply"))
+    save_splat(model, splat)
+    if args.turntable:
+        from .train import render_turntable
+
+        render_turntable(
+            model, rec, os.path.join(args.output, "turntable.mp4"),
+            size=args.train_size,
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="splatvid",
@@ -371,6 +463,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--floater-fix", action="store_true",
                    help="reduce floaters: opacity-reset schedule + prune gaussians "
                         "far outside the SfM point cloud")
+    r.add_argument("--artifix", action="store_true",
+                   help="post-training repair pass (ArtiFixer-style): prune "
+                        "floaters exposed by novel views, fill under-observed "
+                        "holes from reprojected frames, fine-tune")
+    r.add_argument("--artifix-views", type=int, default=24,
+                   help="novel views on the extended trajectory (with --artifix)")
+    r.add_argument("--artifix-iters", type=int, default=600,
+                   help="repair fine-tune iterations (with --artifix)")
     r.add_argument("--flatten", type=float, default=0.0, metavar="W",
                    help="flatten gaussians into surface disks (weight, e.g. 0.1) for "
                         "a crisper median-depth mesh; 0 disables")
@@ -417,6 +517,31 @@ def main(argv: list[str] | None = None) -> int:
                         "scene units); smooths the staircase surface")
     m.add_argument("--mesh-out", default="mesh.ply", help="output filename in the dir")
     m.set_defaults(fn=cmd_mesh)
+
+    a = sub.add_parser(
+        "artifix",
+        help="repair an existing splat: prune floaters, fill holes, re-export",
+    )
+    a.add_argument("output", help="a reconstruct output dir (scene.splat + cameras.npz)")
+    a.add_argument("--video", default=None,
+                   help="the original video; its frames anchor the repair "
+                        "fine-tune (recommended — without it the model's own "
+                        "renders anchor instead)")
+    a.add_argument("--max-frames", type=int, default=0,
+                   help="must match the original reconstruct run (default 0 = auto)")
+    a.add_argument("--frame-size", type=int, default=960,
+                   help="must match the original reconstruct run (default 960)")
+    a.add_argument("--iterations", type=int, default=600,
+                   help="repair fine-tune iterations (default 600)")
+    a.add_argument("--views", type=int, default=24,
+                   help="novel views on the extended repair trajectory (default 24)")
+    a.add_argument("--train-size", type=int, default=320,
+                   help="max image dimension during repair (default 320)")
+    a.add_argument("--device", default="auto",
+                   help="'cpu', 'cuda', 'mps', or 'auto' (default: best available)")
+    a.add_argument("--turntable", action="store_true",
+                   help="also render an orbit video of the repaired scene")
+    a.set_defaults(fn=cmd_artifix)
 
     args = p.parse_args(argv)
     logging.basicConfig(

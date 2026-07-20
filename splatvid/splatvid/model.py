@@ -218,3 +218,51 @@ class GaussianModel(nn.Module):
         with torch.no_grad():
             keep = self.get_opacity()[:, 0] >= min_opacity
             self._rebuild(torch.nonzero(keep).squeeze(1), None)
+
+    def append_gaussians(
+        self,
+        xyz: torch.Tensor,
+        rgb: torch.Tensor,
+        radius: torch.Tensor,
+        init_opacity: float = 0.3,
+    ) -> None:
+        """Append fresh gaussians (e.g. artifix hole seeds) to the model.
+
+        Densification can only clone/split *existing* gaussians, so a truly
+        empty region can never grow geometry on its own — repair passes must
+        be able to plant it. ``radius`` is a per-point world-space size (the
+        isotropic scale init); positions/colours are refined by whatever
+        optimization follows. Caller must rebuild any optimizer afterwards.
+        """
+        with torch.no_grad():
+            n = xyz.shape[0]
+            dev = self.xyz.device
+            to = lambda a: torch.as_tensor(a, dtype=torch.float32, device=dev)  # noqa: E731
+            col = to(rgb).clamp(1e-4, 1 - 1e-4)
+            quat = torch.zeros(n, 4, device=dev)
+            quat[:, 0] = 1.0
+            op = float(np.log(init_opacity / (1 - init_opacity)))
+            extra = {
+                "xyz": to(xyz),
+                "log_scale": to(radius).clamp(min=1e-6).log()[:, None].repeat(1, 3),
+                "quat": quat,
+                "color": (col - 0.5) / self.SH_C0,
+                "opacity": torch.full((n, 1), op, device=dev),
+            }
+            if self.feature is not None:
+                feat = torch.zeros(n, self.feature.shape[1], device=dev)
+                c = min(3, feat.shape[1])
+                feat[:, :c] = col[:, :c]
+                extra["feature"] = feat
+            self._rebuild(torch.arange(self.num_gaussians, device=dev), extra)
+
+    def prune_by_mask(self, keep: torch.Tensor) -> int:
+        """Drop gaussians where ``keep`` is False; returns how many were removed.
+
+        External cleanup passes (e.g. the artifix floater vote) decide *which*
+        gaussians are artifacts; this applies the verdict. Caller must rebuild
+        any optimizer afterwards (parameter tensors are replaced)."""
+        with torch.no_grad():
+            n_before = self.num_gaussians
+            self._rebuild(torch.nonzero(keep).squeeze(1), None)
+            return n_before - self.num_gaussians
